@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dna-builder-sdk"
-version = "0.1.0"
+version = "0.1.1"
 description = "dna-builder 自建后端 + 数据包 + 纯表达式计算的 Python SDK（公开读接口 / 双加载 / 无编辑语义）"
-readme = { text = "README.md", content-type = "text/markdown" }
+readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE*"]
