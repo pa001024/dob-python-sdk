@@ -14,7 +14,7 @@ from . import entities
 from .entities import level_buff, level_char, level_mod, level_monster, level_skill, level_skill_weapon, level_weapon
 
 # 溯源文本的技能等级加成：[技能名]等级+N（可多个，如 3 溯同时给 E+2、P+1）
-TRACE_LEVEL_RE = _re.compile(r"\[([^\]]+)\]等级\+(\d+)")
+TRACE_LEVEL_RE = _re.compile(r"\[([^\]]+)\]\s*等级\s*\+\s*(\d+)")
 
 # 同律槽位在 settings 中的键（对齐 MOD_VARIANT_LEGACY_KEYS）
 LEGACY_SLOT_KEYS = {"角色": "charMods", "近战": "meleeMods", "远程": "rangedMods", "同律": "skillWeaponMods"}
