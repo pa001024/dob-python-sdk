@@ -7,9 +7,31 @@ member_access / temporary_attributes / number，与 TS 字段名一致
 
 from __future__ import annotations
 
+import re
+
 
 class AstError(ValueError):
     pass
+
+
+# JS parseFloat 可接受的最长数字前缀（TS parseFactor 用 parseFloat 转 NUMBER token，
+# 如 parseFloat("0.0.0039") === 0；Python float() 严格语义会抛，必须镜像）
+_JS_FLOAT_RE = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?")
+
+
+def js_parse_float(text: str) -> float:
+    """镜像 JS parseFloat：取最长合法前缀，无有效前缀返回 NaN。"""
+    s = text.lstrip()
+    rest = s[1:] if s[:1] in ("+", "-") else s
+    if rest.startswith("Infinity"):
+        return float("-inf") if s[:1] == "-" else float("inf")
+    match = _JS_FLOAT_RE.match(s)
+    if match is None:
+        return float("nan")
+    try:
+        return float(match.group(0))
+    except ValueError:
+        return float("nan")
 
 
 class _Tokenizer:
@@ -120,7 +142,7 @@ class _Parser:
 
     def _factor(self):
         if self._match("NUMBER"):
-            node: dict = {"type": "number", "value": float(self._prev()["value"])}
+            node: dict = {"type": "number", "value": js_parse_float(self._prev()["value"])}
         elif self._match("IDENT"):
             name = self._prev()["value"]
             ns = None

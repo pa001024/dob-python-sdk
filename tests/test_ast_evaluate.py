@@ -37,6 +37,18 @@ class TestEvaluate(unittest.TestCase):
         self.assertAlmostEqual(evaluate("log(10)", {}), math.log(10))
         self.assertEqual(evaluate("power(2, 10)"), 1024)
 
+    def test_js_parse_float_prefix(self):
+        # 镜像 JS parseFloat（TS parseFactor 语义）：畸形数字取最长合法前缀
+        # 线上真实用例：BD 自定义变量 "1+0.0.0039*0.3"（用户笔误多写了 0.）
+        self.assertEqual(evaluate("0.0.0039"), 0.0)
+        self.assertEqual(evaluate("1+0.0.0039*0.3"), 1.0)
+        self.assertEqual(evaluate("3.14"), 3.14)
+        # 以下与 TS 逐项一致：".5"/"1e3" 在 TS 里根本不是数字（抛错），
+        # "Infinity" 是未定义标识符（按未知变量计 0）
+        self.assertRaises(AstError, evaluate, ".5")
+        self.assertRaises(AstError, evaluate, "1e3")
+        self.assertEqual(evaluate("Infinity"), 0.0)
+
     def test_hp(self):
         attrs = {"昂扬": 0.5, "背水": 0.5}
         got = evaluate("hp(0.5)", attrs)
