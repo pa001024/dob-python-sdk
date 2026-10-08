@@ -1,0 +1,16 @@
+# 构建产物（Actions 内重建，不入库）
+dist/
+build/
+*.egg-info/
+src/*.egg-info/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# 本地抓痕（线上拉取脚本产物、临时构建输出）
+.tmp/
+
+# 缓存根（DNA_BUILDER_CACHE 默认落盘位，勿入库）
+.cache/

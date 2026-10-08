@@ -1,0 +1,84 @@
+{
+    "meta": {
+        "source": "api.dna-builder.cn",
+        "buildId": "g8l0zPKVmM",
+        "title": "主角-水 三水挂机协战位神智消耗参考",
+        "likes": 1,
+        "features": { "modVariants": true, "dotSettings": false, "effectConfig": false, "arraySkillLevel": false }
+    },
+    "charId": 2201,
+    "settings": {
+        "charLevel": 80,
+        "baseName": "斩首行动",
+        "hpPercent": 1,
+        "resonanceGain": 3,
+        "enemyId": 130,
+        "enemyLevel": 80,
+        "enemyResistance": 0,
+        "isRouge": false,
+        "targetFunction": "每秒神智消耗",
+        "customVariables": [
+            ["技能周期", "8*角色::技能耐久!"],
+            [
+                "周期神智消耗",
+                "ceil(120/(2-角色::技能效益!))+ceil(12/(2-角色::技能效益!)/角色::技能耐久!)*8*角色::技能耐久!+ceil(24/(2-角色::技能效益!))"
+            ],
+            ["[每3秒]基础神智获取", "2+角色::神智!//200"],
+            ["每秒神智获取", "[每3秒]基础神智获取/3+12+4-周期神智消耗/技能周期"],
+            ["每秒神智消耗", "-每秒神智获取"]
+        ],
+        "charSkillLevel": 12,
+        "extraMastery": "",
+        "meleeWeapon": 10102,
+        "meleeWeaponLevel": 80,
+        "meleeWeaponRefine": 5,
+        "rangedWeapon": 0,
+        "rangedWeaponLevel": 80,
+        "rangedWeaponRefine": 5,
+        "auraMod": 51725,
+        "imbalance": false,
+        "charMods": [[51424, 10], [51322, 10], [51727, 10], [51727, 10], [51922, 10], [56122, 10], [51728, 10], [51728, 10]],
+        "meleeMods": [null, null, null, null, null, null, null, null],
+        "rangedMods": [null, null, null, null, null, null, null, null],
+        "skillWeaponMods": [null, null, null, null],
+        "modVariantIndex": 1,
+        "modVariants": [
+            {
+                "中枢": 51725,
+                "角色": [[51424, 10], [51322, 10], [51727, 10], [51727, 10], [51922, 10], [51728, 10], [51728, 10], [51728, 10]],
+                "近战": [null, null, null, null, null, null, null, null],
+                "远程": [null, null, null, null, null, null, null, null],
+                "同律": [null, null, null, null]
+            }
+        ],
+        "buffs": [
+            ["主角-水Q", 12],
+            ["主角-水被动", 12],
+            ["自定义BUFF", 1],
+            ["助战50攻", 2],
+            ["扶疏助战", 1],
+            ["扶疏Q", 120],
+            ["扶疏1溯", 1],
+            ["扶疏被动", 12]
+        ],
+        "customBuff": [],
+        "petId": 0,
+        "petLevel": 3,
+        "petCoverage": 1,
+        "petAutoCoverage": true,
+        "traits": [null, null, null, null],
+        "team1": 2401,
+        "team1Weapon": 10502,
+        "team1Build": "-",
+        "team1BuildVariant": "A",
+        "team2": 2102,
+        "team2Weapon": "-",
+        "team2Build": "-",
+        "team2BuildVariant": "A",
+        "timelineDPS": false,
+        "useGlobal": false,
+        "effectConfig": {},
+        "dotSettings": { "skill": 0, "melee": 0, "ranged": 0, "skillweapon": 0, "forceOwnAdditionalDamage": false },
+        "actions": { "enable": false, "i": [], "b": [], "hp": [], "bgs": [] }
+    }
+}

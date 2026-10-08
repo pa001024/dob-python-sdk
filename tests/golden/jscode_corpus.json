@@ -1,0 +1,58 @@
+[
+    {
+        "name": "追加伤害BUG",
+        "code": "if(weaponAttr)weaponAttr.追加伤害*=enemy.等级<200?1:1/(1+(enemy.等级-190)*0.05)"
+    },
+    {
+        "name": "权火将熄5熔",
+        "code": "if(skillWeaponAttr){skillWeaponAttr.暴击+=meleeWeapon.基础暴击*0.25*(1+meleeMods.暴击||0);skillWeaponAttr.暴伤+=meleeWeapon.基础暴伤*0.25*(1+meleeMods.暴伤||0);skillWeaponAttr.触发+=meleeWeapon.基础触发*0.25*(1+meleeMods.触发||0)}"
+    },
+    {
+        "name": "法露茜Q",
+        "code": "var c=char.基础攻击*(1+charMods.攻击)*(1+属性攻击),t=Math.floor(Math.min(攻击,c)/100);if(t>0){生命+=t*1000;攻击-=t*100}"
+    },
+    {
+        "name": "伊薇4溯",
+        "code": "召唤物独立增伤=(1+召唤物独立增伤)*(1+Math.max(0,召唤物攻击速度))-1"
+    },
+    {
+        "name": "妮弗尔夫人Q",
+        "code": "if(技能范围>1)技能威力+=技能范围-1,技能范围=1"
+    },
+    {
+        "name": "琳恩裂伤特性",
+        "code": "独立增伤=(1+独立增伤)*(1+Math.min(2.5,技能威力))-1,攻击+=skillWeaponAttr.攻击"
+    },
+    {
+        "name": "幻景被动",
+        "code": "攻击+=Math.min(神智*0.8,315)"
+    },
+    {
+        "name": "幻景被动2",
+        "code": "攻击+=Math.min(神智*0.8,315)"
+    },
+    {
+        "name": "狩月人之阶",
+        "code": "if(技能威力>1)属性穿透+=Math.min(0.5,0.05*Math.floor((技能威力-1)/0.3))"
+    },
+    {
+        "name": "狩月人之阶2",
+        "code": "if(技能威力>1)技能无视防御+=Math.min(0.42,0.035*Math.floor((技能威力-1)/0.3))"
+    },
+    {
+        "name": "狩月人之阶3",
+        "code": "if(技能范围>技能耐久)技能无视防御+=Math.min(0.42,0.07*Math.floor((技能范围-技能耐久)/0.1));else if(技能耐久>技能范围)属性穿透+=Math.min(0.5,0.1*Math.floor((技能耐久-技能范围)/0.2))"
+    },
+    {
+        "name": "狩月人之阶4",
+        "code": "if(昂扬>0)属性穿透+=Math.min(0.5,0.1*Math.floor(昂扬/0.12))"
+    },
+    {
+        "name": "狩月人之阶5",
+        "code": "if(技能威力>1)属性穿透+=Math.min(0.5,0.05*Math.floor((技能威力-1)/0.4))"
+    },
+    {
+        "name": "狩月人之阶6",
+        "code": "if(充盈威力>1)技能无视防御+=Math.min(0.4,0.04*Math.floor(充盈威力-1))"
+    }
+]

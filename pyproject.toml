@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dna-builder-sdk"
+version = "0.1.0"
+description = "dna-builder 自建后端 + 数据包 + 纯表达式计算的 Python SDK（公开读接口 / 双加载 / 无编辑语义）"
+readme = { text = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE*"]
+authors = [{ name = "pa001024" }]
+keywords = ["dna-builder", "game-data", "sdk", "duet-night-abyss"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Games/Entertainment",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = ["msgpack>=1.0"]
+
+[project.urls]
+Homepage = "https://github.com/pa001024/dna-builder"
+Repository = "https://github.com/pa001024/dna-builder"
+Issues = "https://github.com/pa001024/dna-builder/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
