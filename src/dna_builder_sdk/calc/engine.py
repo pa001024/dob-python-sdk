@@ -709,7 +709,22 @@ class Engine:
                 keys.append(skill["名称"])
         return keys
 
-    def skill_tables(self, attrs: dict) -> dict:
+    def ranged_multi(self, ranged_panel: dict | None = None) -> float:
+        """复刻 CharBuild.getRangedMulti：供技能字段 影响:多重 读取（1 开始）。
+
+        直接读已算好的远程面板时传该面板，避免重复汇总；缺省时按当前构筑现算（nochar 口径，只取面板）。
+        """
+        if isinstance(ranged_panel, dict):
+            value = ranged_panel.get("多重")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return value
+        panel = self.calculate_weapon_attributes(self.s["rangedWeapon"], True, True).get("weapon") or {}
+        value = panel.get("多重")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return value
+        return 1
+
+    def skill_tables(self, attrs: dict, ranged_multi: float | None = None) -> dict:
         import re as _re
 
         rules = []
@@ -720,7 +735,7 @@ class Engine:
                 rules.append((_re.compile(_re.escape(rule["pattern"])), rule["props"]))
         tables = {}
         for skill in self.s["allSkills"]:
-            tables[skill["safeName"]] = entities.level_skill_fields_with_attr(skill, attrs, rules)
+            tables[skill["safeName"]] = entities.level_skill_fields_with_attr(skill, attrs, rules, ranged_multi)
         # E/Q/P（含小写）别名与 TS 求值上下文一致
         e_alias = self.s.get("skill_aliases") or {}
         for alias in ("E", "e", "Q", "q", "P", "p"):
@@ -932,7 +947,9 @@ class Engine:
 
     def damage_context(self, attrs: dict | None = None) -> DamageContext:
         current = attrs if attrs is not None else self.calculate_weapon_attributes()
-        tables = self.skill_tables(current)
+        # 远程武器多重：技能字段 影响:多重 读取该值（先读 nochar 口径面板，与 TS 求值上下文一致）
+        ranged_multi = self.ranged_multi(self.weapon_panels().get("远程"))
+        tables = self.skill_tables(current, ranged_multi)
         self._skill_tables_cache = tables
         engine = self
         panels = self.context_panels(current)

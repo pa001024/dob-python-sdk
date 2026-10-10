@@ -573,18 +573,33 @@ def _merge_conditional(base: dict, props: dict) -> dict:
     return merged
 
 
-def level_skill_fields_with_attr(skill: dict, attrs: dict | None, rules: list) -> list[dict]:
+def _resolve_ranged_multi(attrs: dict | None, ranged_multi=None) -> float:
+    """复刻 LeveledSkill 影响:多重 的取值：显式参数 > rangedWeapon.多重 > weapon.多重 > 1。"""
+    if ranged_multi is not None:
+        return ranged_multi
+    for key in ("rangedWeapon", "weapon"):
+        panel = (attrs or {}).get(key)
+        if isinstance(panel, dict):
+            value = panel.get("多重")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return value
+    return 1
+
+
+def level_skill_fields_with_attr(skill: dict, attrs: dict | None, rules: list, ranged_multi=None) -> list[dict]:
     """复刻 LeveledSkill.getFieldsWithAttr：条件合并 → 技能倍率赋值 → 影响缩放。
 
     :param skill: level_skill 产物（含 字段）
     :param attrs: 当前角色属性（None 时原样返回字段）
     :param rules: [(compiled_pattern, props)] 条件列表
+    :param ranged_multi: 远程武器多重射击（1 开始），显式传入时优先，否则按 attrs 回退读取
     """
     tt = {
         "技能威力": (attrs or {}).get("技能威力") or 1,
         "技能耐久": (attrs or {}).get("技能耐久") or 1,
         "技能效益": (attrs or {}).get("技能效益") or 1,
         "技能范围": (attrs or {}).get("技能范围") or 1,
+        "多重": _resolve_ranged_multi(attrs, ranged_multi),
     }
     out = []
     for field in skill.get("字段") or []:
@@ -622,6 +637,10 @@ def level_skill_fields_with_attr(skill: dict, attrs: dict | None, rules: list) -
                     val = field.get("值") * max(0.25, (2 - tt["技能效益"]) / tt["技能耐久"])
                 else:
                     val = field.get("值") * (2 - tt["技能效益"])
+            if "多重" in props:
+                # 多重影响：读取远程武器多重射击属性（1 开始，无远程武器时为 1，即无加成）
+                val = val * tt["多重"]
+                val2 = val2 * tt["多重"]
             if "神智消耗" in (field.get("名称") or ""):
                 import math as _math
 
