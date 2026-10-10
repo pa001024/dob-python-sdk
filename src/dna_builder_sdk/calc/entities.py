@@ -12,13 +12,20 @@ from .curves import COMMON_LEVEL_UP, MOB_LEVEL_UP
 
 MOD_QUALITY_MAX_LEVEL = {"金": 10, "紫": 5, "蓝": 5, "绿": 3, "白": 3}
 
-MOD_EXCLUDE = frozenset(
+MOD_META_KEYS = frozenset(
     [
-        "id", "系列", "品质", "耐受", "类型", "名称", "描述", "限定", "极性", "属性",
-        "消耗", "技能替换", "_等级", "_originalModData", "buff", "buffLv", "maxLevel",
-        "生效", "效果", "code", "count", "icon", "版本", "buffProps", "_effectAppliedKeys",
+        "id", "icon", "名称", "版本", "系列", "品质", "极性", "耐受", "类型", "属性",
+        "限定", "描述", "效果", "消耗", "技能替换", "buff", "生效", "加成",
     ]
 )
+"""MOD 原始数据中的非属性元信息键。
+
+词条数值只从 ``加成`` 读取（含兼容折叠的旧格式顶层直挂数值），其余顶层键均为元信息。
+此表仅用于兼容旧格式数据包：构造时把遗留直挂数值折叠进加成，此后统一按加成口径计算。
+"""
+
+# 已废弃：MOD_META_KEYS 的别名，仅为兼容保留。
+MOD_EXCLUDE = MOD_META_KEYS
 
 BUFF_EXCLUDE = frozenset(
     [
@@ -106,6 +113,63 @@ def buff_is_layer_prop(raw: dict, prop: str) -> bool:
 
 # ---------- MOD ----------
 
+def _resolve_bonus(raw: dict) -> dict:
+    """解析原始 MOD 数据的词条加成（复刻 TS 加成口径）。
+
+    加成表优先采用 ``加成``，旧格式顶层直挂的数值/数值数组折叠补入。
+    返回新对象，不污染上游静态数据。
+    """
+    bonus: dict = dict(raw.get("加成") or {})
+    for key, value in raw.items():
+        if key in MOD_META_KEYS or key in bonus:
+            continue
+        if _is_num(value):
+            bonus[key] = value
+        elif isinstance(value, list) and all(_is_num(v) for v in value):
+            bonus[key] = list(value)
+    return bonus
+
+
+def _calc_bonus_value(prop: str, max_value, lv: int, max_level: int):
+    """计算词条属性在当前等级下的值（复刻 TS calculateBonusValue）。
+
+    数组按等级取各档绝对值（单元素为定值，越界取边界值）；数值按线性缩放。
+    空数组返回 None（跳过该属性）。
+    """
+    if isinstance(max_value, list):
+        if len(max_value) == 0:
+            return None
+        return max_value[min(max(lv, 0), len(max_value) - 1)]
+    if max_value is None or isinstance(max_value, bool):
+        return None
+    if not _is_num(max_value):
+        return None
+    if not max_value:
+        return max_value
+    value = (max_value / (max_level + 1)) * (lv + 1)
+    if prop in ("神智回复", "最大耐受"):
+        value = math.ceil(value)
+    return value
+
+
+def _mod_attr_keys(inst: dict) -> list:
+    """实例持有的 MOD 层属性键（显式键表，不枚举实例自有键）。"""
+    keys = inst.get("_attrKeys")
+    return keys if isinstance(keys, list) else []
+
+
+def _mod_attr_add(inst: dict, key: str) -> None:
+    """登记 MOD 层属性键（幂等）。"""
+    keys = _mod_attr_keys(inst)
+    if key not in keys:
+        inst["_attrKeys"] = [*keys, key]
+
+
+def _mod_attr_del(inst: dict, key: str) -> None:
+    """移除 MOD 层属性键登记。"""
+    inst["_attrKeys"] = [k for k in _mod_attr_keys(inst) if k != key]
+
+
 def level_mod(raw: dict, level: int | None = None, buff_lv: int | None = None, effect_raw: dict | None = None) -> dict:
     """复刻 LeveledMod 构造 + updateProperties（含特效层归一化）。"""
     max_level = MOD_QUALITY_MAX_LEVEL.get(raw.get("品质"), 1)
@@ -119,7 +183,7 @@ def level_mod(raw: dict, level: int | None = None, buff_lv: int | None = None, e
         "_original": raw,
         "maxLevel": max_level,
         "buffProps": {},
-        "_effectKeys": [],
+        "_attrKeys": [],
     }
     for key in ("极性", "属性", "限定", "效果", "消耗", "技能替换"):
         if raw.get(key) is not None:
@@ -153,6 +217,7 @@ def _mod_apply_level(inst: dict, raw: dict) -> None:
                 continue
             if key in inst:
                 del inst[key]
+            _mod_attr_del(inst, key)
             if isinstance(mv, list):
                 scaled[key] = [(mv[0] / (max_level + 1)) * (level + 1), (mv[1] / (max_level + 1)) * (level + 1)]
             else:
@@ -161,24 +226,22 @@ def _mod_apply_level(inst: dict, raw: dict) -> None:
                     value = math.ceil(value)
                 scaled[key] = value
         inst["生效"] = scaled
-    for prop in raw:
-        if prop in MOD_EXCLUDE:
-            continue
-        max_value = raw[prop]
-        if not max_value:
+    # 词条数值只从加成读取（旧格式顶层直挂数值已折叠进加成表）；键排序保证属性键表确定性。
+    bonus = _resolve_bonus(raw)
+    for prop in sorted(bonus):
+        max_value = bonus[prop]
+        if max_value is None:
             continue
         lv = level
         if inst.get("系列") in ("换生灵", "海妖") and prop == "减伤":
             lv = max_level
         if (mod_id is not None and 100000 < mod_id < 150000) or (mod_id is not None and 200000 < mod_id < 250000):
             lv = max_level
-        if isinstance(max_value, list):
-            inst[prop] = max_value[min(lv + 1, len(max_value)) - 1]
-        else:
-            value = (max_value / (max_level + 1)) * (lv + 1)
-            if prop in ("神智回复", "最大耐受"):
-                value = math.ceil(value)
-            inst[prop] = value
+        value = _calc_bonus_value(prop, max_value, lv, max_level)
+        if value is None:
+            continue
+        inst[prop] = value
+        _mod_attr_add(inst, prop)
     buff_props: dict = {}
     buff = inst.get("buff")
     if buff is not None:
@@ -194,7 +257,7 @@ def _mod_apply_level(inst: dict, raw: dict) -> None:
                 if target is None:
                     continue
                 inst[target] = (inst[target] if _is_num(inst.get(target)) else 0) + value
-                inst["_effectKeys"].append(target)
+                _mod_attr_add(inst, target)
     inst["buffProps"] = buff_props
 
 
@@ -230,7 +293,8 @@ def _resolve_effect_prop(inst: dict, prop: str) -> str | None:
 
 
 def mod_properties(inst: dict) -> list[str]:
-    return [k for k in inst if k not in MOD_EXCLUDE and not k.startswith("_")]
+    """MOD 层数值属性键（显式键表，不枚举实例自有键）。"""
+    return list(_mod_attr_keys(inst))
 
 
 def mod_add_attr(inst: dict) -> dict:
@@ -549,9 +613,11 @@ def mod_apply_condition(mod: dict, attrs: dict, char_mods: list, cond_values: di
                 final = prop
             if mod.get(key) != final:
                 mod[key] = final
+                _mod_attr_add(mod, key)
                 changed = True
         elif mod.get(key):
             del mod[key]
+            _mod_attr_del(mod, key)
             changed = True
     return changed
 
