@@ -1,7 +1,7 @@
 """构筑聚合引擎：纯 BD JSON + 原始表 → 属性/面板/技能表/战斗状态 → 目标值。
 
 复刻 src/data/CharBuild.ts 的只读计算链：
-建表（buildBonusSourceTable）→ getTotalBonus/Mul/Reduce → 40 维向量 →
+建表（buildBonusSourceTable）→ getTotalBonus/Mul/Reduce → 41 维向量 →
 calculateAttributes（含 MOD 条件 / attr-BUFF / code-BUFF）→
 calculateWeaponAttributes（含充盈/召唤物转化）→ 面板/技能表/战斗 → DamageContext →
 evaluate 目标函数。不含编辑语义（无 AutoBuild/变配装），无缓存（每次重算）。
@@ -22,7 +22,7 @@ from .jscode import run_js_code
 CHARACTER_BONUS = [
     "攻击", "固定攻击", "固定生命", "生命", "护盾", "防御", "神智", "属性攻击",
     "技能威力", "技能耐久", "技能效益", "技能范围", "昂扬", "背水", "增伤",
-    "元素增伤", "物理增伤", "武器伤害", "技能伤害", "技能速度", "属性穿透",
+    "元素增伤", "物理增伤", "武器伤害", "技能伤害", "技能追伤", "技能速度", "属性穿透",
     "失衡易伤", "技能倍率加数", "召唤物属性继承比例", "召唤物攻击速度", "召唤物范围",
     "召唤物伤害", "召唤物独立增伤", "技能倍率赋值", "转切割", "转贯穿", "转震荡",
     "转灾厄", "转充盈", "转属克", "转属逆", "充盈威力", "技能触发", "异常数量", "魔灵CD缩减",
@@ -75,6 +75,8 @@ class Engine:
         self._table = None
         self._mods_mul: dict = {}
         self._buffs_mul: dict = {}
+        # 条件 code 差分基线是否正在计算中（重入保护标志，见 _code_conditionals）
+        self._scoped_computing = False
 
     # ---------- MOD 列表 ----------
     def mods(self) -> list:
@@ -357,6 +359,8 @@ class Engine:
         phys_inc = bonuses[idx["物理增伤"]]
         weapon_dmg = bonuses[idx["武器伤害"]]
         skill_dmg = bonuses[idx["技能伤害"]]
+        # 技能追伤（0 起始）：技能伤害的独立乘区，效果与武器的追加伤害类似
+        skill_chase = bonuses[idx["技能追伤"]]
         skill_speed = bonuses[idx["技能速度"]]
         penetration = bonuses[idx["属性穿透"]]
         imbalance_bonus = bonuses[idx["失衡易伤"]]
@@ -398,6 +402,7 @@ class Engine:
             phys_inc += mod_attr_bonus * self.get_mods_bonus(elm, "物理增伤")
             weapon_dmg += mod_attr_bonus * self.get_mods_bonus(elm, "武器伤害")
             skill_dmg += mod_attr_bonus * self.get_mods_bonus(elm, "技能伤害")
+            skill_chase += mod_attr_bonus * self.get_mods_bonus(elm, "技能追伤")
             skill_speed += mod_attr_bonus * self.get_mods_bonus(elm, "技能速度")
             penetration += mod_attr_bonus * self.get_mods_bonus(elm, "属性穿透")
             imbalance_bonus += mod_attr_bonus * self.get_mods_bonus(elm, "失衡易伤")
@@ -428,6 +433,7 @@ class Engine:
             "技能威力": power, "技能耐久": durability, "技能效益": efficiency, "技能范围": scope_range,
             "昂扬": boost, "背水": desperate, "增伤": damage_inc, "元素增伤": elem_inc,
             "物理增伤": phys_inc, "属性攻击": elem_bonus, "武器伤害": weapon_dmg, "技能伤害": skill_dmg,
+            "技能追伤": skill_chase,
             "独立增伤": ind_inc, "属性穿透": penetration, "无视防御": ignore_def,
             "技能无视防御": skill_ignore_def, "技能速度": skill_speed, "失衡易伤": imbalance_bonus,
             "技能倍率加数": skill_add, "技能倍率乘数": skill_mul,
@@ -448,14 +454,52 @@ class Engine:
             return self.calculate_attributes(nocode, True, _depth + 1)
         if nocode:
             return attrs
-        if self.s["dynamicBuffs"]:
+        dyn = list(self.s["dynamicBuffs"])
+        effect_codes = self.effect_code_buffs()
+        if dyn or effect_codes:
             all_panels = self.all_weapon_panels()
             mod_attrs = self.mod_attr_sums()
-            for buff in self.s["dynamicBuffs"]:
+            for buff in dyn:
+                if isinstance(buff.get("技能"), str):
+                    continue
+                attrs = self.apply_code_buff(buff, attrs, all_panels, mod_attrs)
+            for buff in effect_codes:
                 if isinstance(buff.get("技能"), str):
                     continue
                 attrs = self.apply_code_buff(buff, attrs, all_panels, mod_attrs)
         return attrs
+
+    def effect_code_buffs(self) -> list:
+        """已装备 MOD/武器特效自带的 code（对齐 TS CharBuild.getEffectCodeBuffs）。
+
+        用户勾选 BUFF 的 code 走 dynamicBuffs；特效 code 挂在装备实例上，随装备与特效等级动态变化，
+        因此每次计算时现取。只收已生效（特效等级 > 0，武器还需熔炼生效）的条目。
+        """
+        out = []
+        for slot in ("charMods", "meleeMods", "rangedMods", "skillMods"):
+            for mod in self.s.get(slot) or []:
+                if not mod:
+                    continue
+                buff = mod.get("buff") or {}
+                if not buff.get("code") or (buff.get("_等级") or 0) <= 0:
+                    continue
+                out.append(buff)
+        aura = self.s.get("auraMod") or {}
+        aura_buff = aura.get("buff") or {}
+        if aura_buff.get("code") and (aura_buff.get("_等级") or 0) > 0:
+            out.append(aura_buff)
+        for slot in ("meleeWeapon", "rangedWeapon"):
+            weapon = self.s.get(slot) or {}
+            if not weapon:
+                continue
+            buff = weapon.get("buff") or {}
+            if not buff.get("code") or (buff.get("_等级") or 0) <= 0:
+                continue
+            # 缺省视为生效（对齐 TS forgeEffective 默认 true）
+            if "forgeEffective" in weapon and not weapon["forgeEffective"]:
+                continue
+            out.append(buff)
+        return out
 
     # ---------- code BUFF ----------
     def mod_attr_sums(self) -> dict:
@@ -634,10 +678,16 @@ class Engine:
             attrs["召唤物范围"] = (attrs.get("召唤物范围") or 0) + self.get_total("召唤物范围转化", "近战")
         if nocode:
             return attrs
-        if self.s["dynamicBuffs"]:
+        dyn = list(self.s["dynamicBuffs"])
+        effect_codes = self.effect_code_buffs()
+        if dyn or effect_codes:
             all_panels = self.all_weapon_panels(weapon, attrs.get("weapon"))
             mod_attrs = self.mod_attr_sums()
-            for buff in self.s["dynamicBuffs"]:
+            for buff in dyn:
+                if isinstance(buff.get("技能"), str):
+                    continue
+                attrs = self.apply_code_buff(buff, attrs, all_panels, mod_attrs)
+            for buff in effect_codes:
                 if isinstance(buff.get("技能"), str):
                     continue
                 attrs = self.apply_code_buff(buff, attrs, all_panels, mod_attrs)
@@ -769,28 +819,37 @@ class Engine:
 
     def _code_conditionals(self) -> list:
         scoped = [b for b in self.s["dynamicBuffs"] if isinstance(b.get("技能"), str)]
+        scoped += [b for b in self.effect_code_buffs() if isinstance(b.get("技能"), str)]
         if not scoped:
             return []
-        base = self.calculate_weapon_attributes()
-        out = []
-        for buff in scoped:
-            snapshot = dict(base)
-            result = self.apply_code_buff(buff, snapshot, self.all_weapon_panels(), self.mod_attr_sums())
-            props = {}
-            for key, value in result.items():
-                if not isinstance(value, (int, float)) or isinstance(value, bool):
-                    continue
-                before = snapshot.get(key)
-                if not isinstance(before, (int, float)) or isinstance(before, bool) or value == before:
-                    continue
-                if key in ("无视防御", "技能无视防御", "技能倍率乘数") or key.endswith("独立增伤"):
-                    if abs(1 + before) < 1e-12:
+        # 可重入保护：基线计算内部经 attr 型 BUFF 的表达式求值会再次进入本函数，
+        # 此时外层基线尚未算出，直接返回空——基线本就不含条件 code，无需重复差分。
+        if self._scoped_computing:
+            return []
+        self._scoped_computing = True
+        try:
+            base = self.calculate_weapon_attributes()
+            out = []
+            for buff in scoped:
+                snapshot = dict(base)
+                result = self.apply_code_buff(buff, snapshot, self.all_weapon_panels(), self.mod_attr_sums())
+                props = {}
+                for key, value in result.items():
+                    if not isinstance(value, (int, float)) or isinstance(value, bool):
                         continue
-                    props[key] = (1 + value) / (1 + before) - 1
-                else:
-                    props[key] = value - before
-            out.append({"技能": buff["技能"], "pattern": buff["技能"], "flags": "", "props": props})
-        return out
+                    before = snapshot.get(key)
+                    if not isinstance(before, (int, float)) or isinstance(before, bool) or value == before:
+                        continue
+                    if key in ("无视防御", "技能无视防御", "技能倍率乘数") or key.endswith("独立增伤"):
+                        if abs(1 + before) < 1e-12:
+                            continue
+                        props[key] = (1 + value) / (1 + before) - 1
+                    else:
+                        props[key] = value - before
+                out.append({"技能": buff["技能"], "pattern": buff["技能"], "flags": "", "props": props})
+            return out
+        finally:
+            self._scoped_computing = False
 
     def combat_info(self) -> dict:
         enemy = self.s["enemy"]

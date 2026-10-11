@@ -11,10 +11,15 @@ oracle 输入（见 tests/golden/*.json，由 .tmp/dump-shardbuild-golden.ts 生
 - weapons / weapon_bases：面板键 → `{伤害类型, 类型, inherit, atk, isSkillWeapon}` 与有效武器基础值
 - combat：敌人/战斗状态；attrs / weapon_panels 沿用 evaluate 口径
 
-TS 出处（行号指 src/data/CharBuild.ts）：getWeaponFieldBase≈3185、
-getTemporaryWeaponAttr≈3233、getSummonAttrs≈3260、isDamageSkillField≈3323、
-getDamage≈3342、getDef≈3407、evaluateExpression≈3427、calculateSkillDamage≈2220、
-calculateWeaponDamage≈2298、calculateDefenseMultiplier≈2182。
+TS 出处（行号指 src/data/CharBuild.ts）：getWeaponFieldBase≈3260、
+getTemporaryWeaponAttr≈3270、getSummonAttrs≈3330、isDamageSkillField≈3360、
+getDamage≈3472、getDef≈3550、evaluateExpression≈3560、calculateDamage≈2308、
+calculateSkillDamage≈2564、calculateWeaponDamage≈2580、calculateDefenseMultiplier≈2264。
+
+统一结算口径（对齐 calculateDamage）：归属（有无武器面板）定双爆，tag 定乘区分量
+（技能→技能伤害池 + 技能追伤 + 纯元素分量；武器→武器伤害池 + 武器追加伤害 + 武器攻分量）；
+技能池触发按 bonus 模型（期望 = base × (1 + bonus × 覆盖率），覆盖率 = 武器面板触发 + 技能触发后封顶）；
+灾厄转化（武器归属时）转纯物理分量，不吃抗性。调用方按语义传参，不重写触发/增伤区。
 """
 
 from __future__ import annotations
@@ -285,6 +290,12 @@ class DamageContext:
         """对齐 getDef：武器槽位 key 进防御（非技能），否则技能防御。"""
         key = base or self.base_name
         is_weapon = key in self.panels and self.panels.get(key) is not None
+        # 技能伤害字段（tag 含 技能）视为技能伤害：防御按技能口径结算，吃技能无视防御
+        if field_name:
+            table = self._table(ctx_safe) if ctx_safe else (self.tables.get(key) or [])
+            field = self.find_field_wide(table, field_name)
+            if isinstance(field, dict) and "技能" in (field.get("tag") or []):
+                is_weapon = False
         merged = self.summon_attrs(key, temp, field_name, ctx_safe) if temp else self.attrs
         return self.defense_multiplier(merged, not is_weapon)
 
@@ -392,23 +403,43 @@ class DamageContext:
             return _num((self.combat.get("hpTypeCoefficients") or {}).get(self.combat.get("currentHPType"))) + bonus
         return 0.0
 
-    def _skill_damage(self, merged: dict, base: str | None, field_name: str | None, ctx_safe: str | None) -> dict:
-        """对齐 calculateSkillDamage：返回乘区形态 DamageResult（不含面板基值）。"""
-        table_safe = ctx_safe
-        if not table_safe:
-            for entry in self.skill_names:
-                if entry.get("名称") == (base or self.base_name):
-                    table_safe = entry.get("safeName")
-                    break
-        field = self.find_field_wide(self._table(table_safe), field_name or "") if field_name else None
-        is_summon = bool(field and "召唤物" in (field.get("tag") or []))
-        di_base = 1 + _num(merged.get("增伤")) + _num(merged.get("技能伤害")) + (_num(merged.get("召唤物伤害")) if is_summon else 0)
+    # ---- 统一伤害结算 ----
+    def _damage(self, merged, *, weapon=None, panel=None, damage_type=None, field_tag=None,
+                is_skill_pool=None, is_summon=None, coverage=1.0,
+                bonus_inc=0.0, bonus_ind=0.0, penalty=0.0):
+        """对齐 calculateDamage：归属定双爆（有武器面板才结算暴击/触发），tag 定乘区分量；
+        技能池触发按 bonus 模型（期望 = base × (1 + bonus × 覆盖率））。"""
+        has_weapon = weapon is not None and panel is not None
+        tag = field_tag or []
+        if is_skill_pool is None:
+            if "技能" in tag:
+                is_skill_pool = True
+            elif "武器" in tag:
+                is_skill_pool = False
+            else:
+                is_skill_pool = not has_weapon
+        if is_summon is None:
+            is_summon = "召唤物" in tag
+        dtype = damage_type or (weapon or {}).get("伤害类型")
+        hp_more = self._boost(merged) * self._desperate(merged)
+        pen = max(0.0, 1 + _num(merged.get("属性穿透")))
+        if is_skill_pool:
+            di_base = 1 + _num(merged.get("增伤")) + _num(merged.get("技能伤害")) + (_num(merged.get("召唤物伤害")) if is_summon else 0.0)
+        else:
+            di_base = 1 + _num(merged.get("增伤")) + _num((panel or {}).get("增伤")) + _num(merged.get("武器伤害"))
+        di_base += bonus_inc
         elem_inc = _num(merged.get("元素增伤"))
         phys_inc = _num(merged.get("物理增伤"))
-        other = (1 + _num(merged.get("独立增伤"))) * ((1 + _num(merged.get("召唤物独立增伤"))) if is_summon else 1)
-        other *= (_num(merged.get("失衡易伤")) + 1.5) if self.combat.get("imbalance") else 1
-        other *= max(0.0, 1 + _num(merged.get("属性穿透")))
-        hp_more = self._boost(merged) * self._desperate(merged)
+        if is_skill_pool:
+            indep = (1 + _num(merged.get("独立增伤"))) * (1 + _num(merged.get("技能独立增伤")))
+        else:
+            indep = ((1 + _num(merged.get("独立增伤"))) * (1 + _num((panel or {}).get("独立增伤")))) / (1 + penalty)
+        indep *= 1 + bonus_ind
+        add = (1 + _num(merged.get("技能追伤"))) if is_skill_pool else (1 + _num((panel or {}).get("追加伤害")))
+        summon_mult = (1 + _num(merged.get("召唤物独立增伤"))) if is_summon else 1.0
+        other = indep * add * summon_mult * pen
+        other *= (_num(merged.get("失衡易伤")) + 1.5) if self.combat.get("imbalance") else 1.0
+        common = hp_more * other
         resistance = _num(self.combat.get("resistance"))
         factor = lambda r: max(0.0, 1 - r)
         flipped = max(0.0, 1 - (-4 if resistance > 0 else 0.5))
@@ -418,126 +449,134 @@ class DamageContext:
         pool = raw_elem + raw_phys
         scale = 1 / pool if pool > 1 else 1.0
         rest = max(0.0, 1 - min(1.0, pool))
-        parts = []
-        if rest > 0:
-            parts.append((rest, factor(resistance), True))
-        if active:
-            ratio = max(0.0, _num(merged.get(active))) * scale
-            if ratio > 0:
-                parts.append((ratio, flipped, True))
-        for key in PHYSICAL_CONVERTS:
-            ratio = max(0.0, _num(merged.get(key))) * scale
-            if ratio > 0:
-                parts.append((ratio, 1.0, False))
-        phys = sum(r * f * (di_base + (elem_inc if el else phys_inc)) for r, f, el in parts if not el)
-        elem = sum(r * f * (di_base + (elem_inc if el else phys_inc)) for r, f, el in parts if el)
-        total = phys + elem
-        return {
-            "expectedDamage": total * other * hp_more,
-            "noHpDamage": total * other,
-            "physicalDamage": phys * other * hp_more,
-            "elementDamage": elem * other * hp_more,
-        }
-
-    def _weapon_damage(self, merged: dict, key: str, field_damage_type: str | None) -> dict:
-        """对齐 calculateWeaponDamage：返回乘区形态 DamageResult。"""
-        w = self.weapons.get(key) or {}
-        weapon_attrs = merged.get("weapon") or {}
-        total = _num(merged.get("攻击")) + _num(weapon_attrs.get("攻击"))
+        crit_rate, crit_dmg = 0.0, 1.0
+        lower_cd = higher_cd = crit_exp = 1.0
+        trig_rate = 0.0
+        if has_weapon:
+            crit_rate = _num(panel.get("暴击"))
+            crit_dmg = _num(panel.get("暴伤"))
+            lower_cd = (crit_dmg - 1) * math.floor(crit_rate) + 1
+            higher_cd = (crit_dmg - 1) * math.ceil(crit_rate) + 1
+            crit_exp = 1 + crit_rate * (crit_dmg - 1)
+            # 触发率允许溢出但触发效果按 100% 封顶；负值钳制为 0；
+            # 技能池的触发率即调用方传入的覆盖率（武器面板触发 + 技能触发后封顶），按 bonus 模型进入期望
+            trig_rate = coverage if is_skill_pool else min(1.0, max(0.0, _num(panel.get("触发"))))
+        w = weapon or {}
         inherit_all = bool(w.get("isSkillWeapon")) and bool(w.get("inherit")) and w.get("atk") == "all"
-        dtype = field_damage_type or w.get("伤害类型")
-        convert_phys = dtype == "灾厄" and not inherit_all
-        if convert_phys:
-            phys_share, elem_share = 1.0, 0.0
-        elif inherit_all:
-            phys_share, elem_share = 0.0, 1.0
-        else:
-            phys_share = _num(weapon_attrs.get("攻击")) / total if total else 0.0
-            elem_share = _num(merged.get("攻击")) / total if total else 0.0
-        trigger_rate = min(1.0, max(0.0, _num(weapon_attrs.get("触发"))))
-        crit_rate = _num(weapon_attrs.get("暴击"))
-        crit_dmg = _num(weapon_attrs.get("暴伤"))
-        lower_cd = (crit_dmg - 1) * math.floor(crit_rate) + 1
-        higher_cd = (crit_dmg - 1) * math.ceil(crit_rate) + 1
-        crit_exp = 1 + crit_rate * (crit_dmg - 1)
-        resistance = _num(self.combat.get("resistance"))
-        flipped = max(0.0, 1 - (-4 if resistance > 0 else 0.5))
-        pen = max(0.0, 1 + _num(merged.get("属性穿透")))
-        hp_more = self._boost(merged) * self._desperate(merged)
-        di_base = 1 + _num(merged.get("增伤")) + _num(weapon_attrs.get("增伤")) + _num(merged.get("武器伤害"))
-        elem_inc = _num(merged.get("元素增伤"))
-        phys_inc = _num(merged.get("物理增伤"))
-        other = (1 + _num(merged.get("独立增伤"))) * (1 + _num(weapon_attrs.get("独立增伤")))
-        other *= 1 + _num(weapon_attrs.get("追加伤害"))
-        other *= (_num(merged.get("失衡易伤")) + 1.5) if self.combat.get("imbalance") else 1
-        other *= pen
-        common = hp_more * other
-        active = "转属克" if resistance > 0 else ("转属逆" if resistance < 0 else None)
-        raw_elem = max(0.0, _num(merged.get(active))) if active else 0.0
-        raw_phys = sum(max(0.0, _num(merged.get(k))) for k in PHYSICAL_CONVERTS)
-        pool = raw_elem + raw_phys
-        scale = 1 / pool if pool > 1 else 1.0
-        rest = max(0.0, 1 - min(1.0, pool))
-        elem_ratio = min(1.0, raw_elem) * scale
-        f = lambda r: max(0.0, 1 - r)
-        if resistance == 0:
-            res_factor = f(0)
-        elif resistance < 0:
-            res_factor = (1 - elem_ratio) * f(resistance) + elem_ratio * f(0.5)
-        else:
-            res_factor = (1 - elem_ratio) * f(resistance) + elem_ratio * f(-4)
-        entries = []
-        if active:
-            entries.append((raw_elem, "element", active))
-        for k in PHYSICAL_CONVERTS:
-            entries.append((max(0.0, _num(merged.get(k))), "physical", k))
-        elem_part = elem_share * res_factor
+        calamity = has_weapon and dtype == "灾厄" and not inherit_all
+        use_weapon_split = (not is_skill_pool) and has_weapon
         parts = []
-        if inherit_all:
-            if rest > 0:
-                parts.append((elem_part * rest, 0.0, True))
-        else:
-            if phys_share > 0 and rest > 0:
-                parts.append((phys_share * rest, self._trigger_mult(dtype), False))
-            if rest > 0:
-                parts.append((elem_part * rest, 0.0, True))
-        for ratio, kind, conv_key in entries:
-            ratio *= scale
-            if ratio <= 0:
-                continue
-            if kind == "element":
-                if phys_share > 0:
-                    parts.append((phys_share * ratio * flipped, 0.0, True))
-                parts.append((elem_part * ratio, 0.0, True))
+        if use_weapon_split:
+            total = _num(merged.get("攻击")) + _num(panel.get("攻击"))
+            convert_phys = dtype == "灾厄" and not inherit_all
+            if convert_phys:
+                phys_share, elem_share = 1.0, 0.0
+            elif inherit_all:
+                phys_share, elem_share = 0.0, 1.0
             else:
-                trig = self._conv_trigger(conv_key)
+                phys_share = _num(panel.get("攻击")) / total if total else 0.0
+                elem_share = _num(merged.get("攻击")) / total if total else 0.0
+            elem_ratio = min(1.0, raw_elem) * scale
+            if resistance == 0:
+                res_factor = factor(0)
+            elif resistance < 0:
+                res_factor = (1 - elem_ratio) * factor(resistance) + elem_ratio * factor(0.5)
+            else:
+                res_factor = (1 - elem_ratio) * factor(resistance) + elem_ratio * factor(-4)
+            elem_part = elem_share * res_factor
+            if inherit_all:
+                if rest > 0:
+                    parts.append((elem_part * rest, 1.0, 0.0, True))
+            else:
+                if phys_share > 0 and rest > 0:
+                    parts.append((phys_share * rest, 1.0, self._trigger_mult(dtype), False))
+                if rest > 0:
+                    parts.append((elem_part * rest, 1.0, 0.0, True))
+            if active:
+                ratio = raw_elem * scale
+                if ratio > 0:
+                    if not inherit_all and phys_share > 0:
+                        parts.append((phys_share * ratio * flipped, 1.0, 0.0, True))
+                    parts.append((elem_part * ratio, 1.0, 0.0, True))
+            for key in PHYSICAL_CONVERTS:
+                ratio = max(0.0, _num(merged.get(key))) * scale
+                if ratio <= 0:
+                    continue
+                trig = self._conv_trigger(key)
                 if inherit_all:
-                    parts.append((elem_part * ratio, trig, False))
+                    parts.append((elem_part * ratio, 1.0, trig, False))
                 else:
                     if phys_share > 0:
-                        parts.append((phys_share * ratio, trig, False))
-                    parts.append((elem_part * ratio, trig, False))
+                        parts.append((phys_share * ratio, 1.0, trig, False))
+                    parts.append((elem_part * ratio, 1.0, trig, False))
+        else:
+            # 技能分量：纯元素基座；灾厄转化（武器归属时）转纯物理分量，不吃抗性
+            skill_trig = self._trigger_mult(dtype) if has_weapon else 0.0
+            if calamity:
+                if rest > 0:
+                    parts.append((rest, 1.0, skill_trig, False))
+                if active:
+                    ratio = raw_elem * scale
+                    if ratio > 0:
+                        parts.append((ratio, flipped, 0.0, True))
+            else:
+                if rest > 0:
+                    parts.append((rest, factor(resistance), skill_trig, True))
+                if active:
+                    ratio = max(0.0, _num(merged.get(active))) * scale
+                    if ratio > 0:
+                        parts.append((ratio, flipped, skill_trig, True))
+            for key in PHYSICAL_CONVERTS:
+                ratio = max(0.0, _num(merged.get(key))) * scale
+                if ratio <= 0:
+                    continue
+                trig = self._conv_trigger(key) if has_weapon else 0.0
+                parts.append((ratio, 1.0, trig, False))
         inc = lambda el: di_base + (elem_inc if el else phys_inc)
-        all_part = sum(r * inc(el) for r, _, el in parts)
-        trig_part = sum(r * (1 + t) * inc(el) for r, t, el in parts)
-        exp_part = sum(r * (1 + t * trigger_rate) * inc(el) for r, t, el in parts)
-        phys_exp = sum(r * (1 + t * trigger_rate) * inc(el) for r, t, el in parts if not el)
-        elem_exp = sum(r * (1 + t * trigger_rate) * inc(el) for r, t, el in parts if el)
+        no_part = sum(r * f * inc(el) for r, f, _t, el in parts)
+        exp_part = sum(r * f * (1 + t * trig_rate) * inc(el) for r, f, t, el in parts)
+        full_part = sum(r * f * (1 + t) * inc(el) for r, f, t, el in parts)
+        phys_exp = sum(r * f * (1 + t * trig_rate) * inc(el) for r, f, t, el in parts if not el)
+        elem_exp = sum(r * f * (1 + t * trig_rate) * inc(el) for r, f, t, el in parts if el)
         exp_crit_base = crit_exp * common
+        # 技能池的覆盖率已作为触发率进入期望（bonus 模型），此处不再整体折乘
         return {
-            "lowerCritNoTrigger": all_part * (lower_cd * common),
-            "higherCritNoTrigger": all_part * (higher_cd * common),
-            "lowerCritTrigger": trig_part * (lower_cd * common),
-            "higherCritTrigger": trig_part * (higher_cd * common),
+            "lowerCritNoTrigger": no_part * (lower_cd * common),
+            "higherCritNoTrigger": no_part * (higher_cd * common),
+            "lowerCritTrigger": full_part * (lower_cd * common),
+            "higherCritTrigger": full_part * (higher_cd * common),
             "lowerCritExpectedTrigger": exp_part * (lower_cd * common),
             "higherCritExpectedTrigger": exp_part * (higher_cd * common),
             "expectedCritTrigger": exp_part * exp_crit_base,
-            "expectedCritNoTrigger": all_part * exp_crit_base,
+            "expectedCritNoTrigger": no_part * exp_crit_base,
             "expectedDamage": exp_part * exp_crit_base,
             "noHpDamage": exp_part * crit_exp * other,
             "physicalDamage": phys_exp * exp_crit_base,
             "elementDamage": elem_exp * exp_crit_base,
         }
+
+    def _skill_damage(self, merged, base=None, field_name=None, ctx_safe=None, bonus_inc=0.0, bonus_ind=0.0):
+        """对齐 calculateSkillDamage（角色技能口径）：无武器归属，乘区分量按 tag 回退技能池。"""
+        table_safe = ctx_safe
+        if not table_safe:
+            for entry in self.skill_names:
+                if entry.get("名称") == (base or self.base_name):
+                    table_safe = entry.get("safeName")
+                    break
+        field = self.find_field_wide(self._table(table_safe), field_name or "") if field_name else None
+        tag = (field or {}).get("tag") if isinstance(field, dict) else None
+        is_summon = bool(field and "召唤物" in ((field or {}).get("tag") or []))
+        return self._damage(merged, weapon=None, panel=None, damage_type=None, field_tag=tag,
+                            is_skill_pool=None, is_summon=is_summon, coverage=1.0,
+                            bonus_inc=bonus_inc, bonus_ind=bonus_ind, penalty=0.0)
+
+    def _weapon_damage(self, merged, key, field_damage_type=None, bonus_inc=0.0, bonus_ind=0.0, penalty=0.0):
+        """对齐 calculateWeaponDamage（武器口径）：武器归属双爆，武器池乘区分量。"""
+        w = self.weapons.get(key) if isinstance(self.weapons.get(key), dict) else None
+        panel = merged.get("weapon") if isinstance(merged.get("weapon"), dict) else None
+        return self._damage(merged, weapon=w, panel=panel, damage_type=field_damage_type, field_tag=["武器"],
+                            is_skill_pool=False, is_summon=False, coverage=1.0,
+                            bonus_inc=bonus_inc, bonus_ind=bonus_ind, penalty=penalty)
 
     def _conv_trigger(self, key: str) -> float:
         return self._trigger_mult({"转切割": "切割", "转贯穿": "贯穿", "转震荡": "震荡", "转灾厄": "灾厄"}.get(key, key))
@@ -558,40 +597,32 @@ class DamageContext:
             w and field_dtype == "灾厄" and w.get("类型") == "远程" and self.combat.get("hasArrowRainMod")
         )
         weapon_attr = self.temp_weapon_attr(key, field_name, temp, ctx_safe)
-        if w is not None and weapon_attr:
-            tags = None
-            if isinstance(field, dict):
-                tags = field.get("tag")
-            if self.attack_bonus_fn is not None:
-                bonus_inc = _num(self.attack_bonus_fn(key, field_name, "增伤", (w or {}).get("类型"), tags, ctx_safe))
-                bonus_ind = _num(self.attack_bonus_fn(key, field_name, "独立增伤", (w or {}).get("类型"), tags, ctx_safe))
-            else:
-                bonus_inc = _num((self.attack_bonus.get(f"{key}::{field_name}::增伤", 0)))
-                bonus_ind = _num((self.attack_bonus.get(f"{key}::{field_name}::独立增伤", 0)))
-            indep = (1 + _num(weapon_attr.get("独立增伤"))) / (1 + (-0.6 if arrow else 0))
-            merged = {
-                **merged,
-                "weapon": {
-                    **weapon_attr,
-                    "增伤": _num(weapon_attr.get("增伤")) + bonus_inc,
-                    "独立增伤": indep * (1 + bonus_ind) - 1,
-                },
-            }
-            damage = self._weapon_damage(merged, key, field_dtype)
+        # 乘区分量按字段 tag：含「技能」走技能池，含「武器」走武器池，无 tag 按归属回退；双爆按归属。
+        # 不再重写面板触发区与属性增伤区（原 hack 把武器增伤/武器独立乘进技能池、追加清零丢技能追伤）。
+        tag = (field.get("tag") or []) if isinstance(field, dict) else []
+        has_weapon = w is not None and weapon_attr is not None
+        if tag and "技能" in tag:
+            is_skill_pool = True
+        elif tag and "武器" in tag:
+            is_skill_pool = False
         else:
-            if self.attack_bonus_fn is not None:
-                weapon = self.weapons.get(key) if isinstance(self.weapons.get(key), dict) else None
-                bonus_inc = _num(self.attack_bonus_fn(key, field_name, "增伤", (weapon or {}).get("类型"), None, ctx_safe))
-                bonus_ind = _num(self.attack_bonus_fn(key, field_name, "独立增伤", (weapon or {}).get("类型"), None, ctx_safe))
-            else:
-                bonus_inc = _num((self.attack_bonus.get(f"{key}::{field_name}::增伤", 0)))
-                bonus_ind = _num((self.attack_bonus.get(f"{key}::{field_name}::独立增伤", 0)))
-            merged = {
-                **merged,
-                "增伤": _num(merged.get("增伤")) + bonus_inc,
-                "独立增伤": (1 + _num(merged.get("独立增伤"))) * (1 + bonus_ind) - 1,
-            }
-            damage = self._skill_damage(merged, base, field_name, ctx_safe)
+            is_skill_pool = not has_weapon
+        is_summon = "召唤物" in tag
+        if self.attack_bonus_fn is not None:
+            bonus_inc = _num(self.attack_bonus_fn(key, field_name, "增伤", (w or {}).get("类型"), tag or None, ctx_safe))
+            bonus_ind = _num(self.attack_bonus_fn(key, field_name, "独立增伤", (w or {}).get("类型"), tag or None, ctx_safe))
+        else:
+            bonus_inc = _num((self.attack_bonus.get(f"{key}::{field_name}::增伤", 0)))
+            bonus_ind = _num((self.attack_bonus.get(f"{key}::{field_name}::独立增伤", 0)))
+        # 技能池 + 有武器：触发期望按覆盖率结算（bonus 模型：未触发 1 倍），覆盖率 = 武器面板触发 + 技能触发后封顶
+        if is_skill_pool and has_weapon:
+            coverage = max(0.0, min(1.0, _num(merged.get("技能触发")) + _num((weapon_attr or {}).get("触发"))))
+        else:
+            coverage = 1.0
+        damage = self._damage(merged, weapon=w, panel=weapon_attr, damage_type=field_dtype,
+                              field_tag=tag, is_skill_pool=is_skill_pool, is_summon=is_summon,
+                              coverage=coverage, bonus_inc=bonus_inc, bonus_ind=bonus_ind,
+                              penalty=(-0.6 if arrow else 0.0))
         fullness_mult = 1.0
         if field and "充盈" in (field.get("tag") or []):
             fullness_mult = 1 + _num(merged.get("充盈威力"))
@@ -601,6 +632,7 @@ class DamageContext:
                 fullness_mult = 1 + conv * _num(merged.get("充盈威力"))
         if fullness_mult != 1:
             damage = {k: (v * fullness_mult if isinstance(v, (int, float)) else v) for k, v in damage.items()}
+        # 技能池的覆盖率已作为触发率进入期望（bonus 模型），此处不再整体折乘
         if not temp:
             self._damage_cache[cache_key] = damage
         return damage
