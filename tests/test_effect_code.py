@@ -145,3 +145,23 @@ class QiusuoTriggerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CalamityConvertNoWeaponTest(unittest.TestCase):
+    def _dmg(self, skill_trigger):
+        ctx = DamageContext(
+            attrs={"技能触发": skill_trigger},
+            panels={}, skill_tables={}, skill_names=[],
+            aliases={}, rules=[], attack_bonus={}, weapons={}, weapon_bases={},
+            combat={"resistance": -4}, base_name="普通攻击",
+        )
+        merged = {
+            "增伤": 0.0, "技能伤害": 0.0, "元素增伤": 0.0, "物理增伤": 0.0,
+            "独立增伤": 0.0, "技能追伤": 0.0, "属性穿透": 0.0, "失衡易伤": 0.0,
+            "昂扬": 0.0, "背水": 0.0, "技能触发": skill_trigger, "转灾厄": 1.0,
+        }
+        return ctx._damage(merged, weapon=None, panel=None, is_skill_pool=True)["expectedDamage"]
+
+    def test_no_weapon_calamity_convert_triggers(self):
+        # 无武器归属的转灾厄依然结算灾厄触发（只需敌方存在抗性），按技能触发率
+        self.assertAlmostEqual(self._dmg(1.0) / self._dmg(0.0), 2.0, places=6)

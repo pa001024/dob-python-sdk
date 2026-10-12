@@ -461,6 +461,9 @@ class DamageContext:
             # 触发率允许溢出但触发效果按 100% 封顶；负值钳制为 0；
             # 技能池的触发率即调用方传入的覆盖率（武器面板触发 + 技能触发后封顶），按 bonus 模型进入期望
             trig_rate = coverage if is_skill_pool else min(1.0, max(0.0, _num(panel.get("触发"))))
+        else:
+            # 无武器归属：仅转灾厄转换分量结算触发（灾厄触发只需敌方存在抗性），按技能触发率
+            trig_rate = min(1.0, max(0.0, _num(merged.get("技能触发", 0))))
         w = weapon or {}
         inherit_all = bool(w.get("isSkillWeapon")) and bool(w.get("inherit")) and w.get("atk") == "all"
         calamity = has_weapon and dtype == "灾厄" and not inherit_all
@@ -530,7 +533,8 @@ class DamageContext:
                 ratio = max(0.0, _num(merged.get(key))) * scale
                 if ratio <= 0:
                     continue
-                trig = self._conv_trigger(key) if has_weapon else 0.0
+                # 转灾厄无武器归属时也结算灾厄触发（只需敌方存在抗性）；其余物理子类仍需武器归属
+                trig = self._conv_trigger(key) if (has_weapon or key == "转灾厄") else 0.0
                 parts.append((ratio, 1.0, trig, False))
         inc = lambda el: di_base + (elem_inc if el else phys_inc)
         no_part = sum(r * f * inc(el) for r, f, _t, el in parts)
