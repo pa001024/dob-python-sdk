@@ -60,7 +60,7 @@ class EffectCodeTest(unittest.TestCase):
         """技能限定 code + attr 型 BUFF 共存时基线重入必须终止（栈溢出回归）。"""
         buffs = [
             {"名称": "黎瑟·浴火2溯", "技能": "伤害", "code": "if(技能速度>2)独立增伤=(1+独立增伤)*(1+技能速度*0.15)-1"},
-            {"名称": "无解谜题5熔", "技能": "求索", "attr": {"技能倍率乘数": "技能速度"}},
+            {"名称": "无解谜题5熔", "技能": "求索", "attr": {"技能倍率乘数": "技能速度-1"}},
         ]
         attrs = Engine(_state([], None, buffs), None).calculate_attributes()
         self.assertTrue(all(
