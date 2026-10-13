@@ -1,4 +1,4 @@
-"""BUFF code 语料回归：全部 14 段真实 code 可解析、可执行（合成沙箱，只断言不抛 JsError）。"""
+"""BUFF code 语料回归：全部 15 段真实 code 可解析、可执行（合成沙箱，只断言不抛 JsError）。"""
 
 import json
 import os
@@ -16,6 +16,7 @@ def _sandbox():
         "攻击": 1000.0, "生命": 5000.0, "神智": 300.0, "技能威力": 2.0, "技能范围": 1.5,
         "技能耐久": 1.2, "昂扬": 0.5, "属性穿透": 0.1, "技能无视防御": 0.0,
         "充盈威力": 1.0, "召唤物攻击速度": 0.5, "召唤物独立增伤": 0.0, "增伤": 0.5,
+        "技能速度": 2.0,
         "char": dict(base),
         "weapon": dict(base), "meleeWeapon": dict(base), "rangedWeapon": dict(base), "skillWeapon": dict(base),
         "weaponAttr": dict(panel), "meleeWeaponAttr": dict(panel),
@@ -31,7 +32,7 @@ class TestJsCodeCorpus(unittest.TestCase):
     def test_all_corpus_parses_and_runs(self):
         with open(GOLDEN, encoding="utf-8") as fh:
             corpus = json.load(fh)
-        self.assertEqual(len(corpus), 14)
+        self.assertEqual(len(corpus), 15)
         for entry in corpus:
             with self.subTest(buff=entry["name"]):
                 _Parser(entry["code"]).parse_program()  # 解析不抛错
