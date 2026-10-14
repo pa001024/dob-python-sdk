@@ -29,8 +29,17 @@ MOD_EXCLUDE = MOD_META_KEYS
 
 BUFF_EXCLUDE = frozenset(
     [
-        "id", "名称", "描述", "限定", "品质", "_等级", "_originalBuffData", "a", "b",
-        "lx", "bx", "mx", "dx", "pid", "pt", "code", "attr", "技能", "_ratio", "_coverage",
+        "id", "名称", "描述", "限定", "_等级", "_originalBuffData", "a", "b",
+        "lx", "bx", "mx", "dx", "pid", "pt", "code", "attr", "技能", "tag", "_ratio", "_coverage",
+    ]
+)
+
+# BUFF 原始行元信息键：旧格式顶层直挂折叠时跳过这些键。
+BUFF_META_KEYS = frozenset(
+    [
+        "id", "名称", "描述", "限定", "品质", "版本",
+        "a", "b", "dx", "lx", "mx", "code",
+        "技能", "tag", "attr", "display",
     ]
 )
 
@@ -64,9 +73,12 @@ def level_buff(raw: dict, level: int | None = None, coverage: float = 1.0, ratio
         "_coverage": coverage,
         "_ratio": ratio,
     }
-    for key in ("a", "b", "lx", "mx", "dx", "技能", "code", "attr"):
+    for key in ("a", "b", "lx", "mx", "dx", "技能", "tag", "code", "attr"):
         if raw.get(key) is not None and not (key in ("a", "b") and raw.get(key) == 1):
             if key in ("a", "b") and raw.get(key) == 1:
+                continue
+            if key == "tag" and isinstance(raw[key], list):
+                inst[key] = list(raw[key])
                 continue
             inst[key] = raw[key]
     if raw.get("mx") is not None:
@@ -75,6 +87,25 @@ def level_buff(raw: dict, level: int | None = None, coverage: float = 1.0, ratio
     inst["_等级"] = level if level is not None and level >= 0 else (inst.get("dx") or inst.get("mx") or 1)
     _buff_apply_level(inst, raw)
     return inst
+
+
+def _buff_attr_source(raw: dict) -> dict:
+    """数值源：attr 子表优先，旧格式顶层直挂的数值/数值数组折叠补入（attr 同键胜出）。
+
+    字符串值为动态表达式，由 apply_buff_attr 求值，此处不处理。
+    """
+    out: dict = {}
+    attr = raw.get("attr")
+    if isinstance(attr, dict):
+        out.update(attr)
+    for key, value in raw.items():
+        if key in BUFF_META_KEYS or key in out:
+            continue
+        if _is_num(value):
+            out[key] = value
+        elif isinstance(value, list) and all(_is_num(v) for v in value):
+            out[key] = value
+    return out
 
 
 def _buff_apply_level(inst: dict, raw: dict) -> None:
@@ -86,10 +117,7 @@ def _buff_apply_level(inst: dict, raw: dict) -> None:
     a = inst.get("a") or 1
     b = inst.get("b") or 1
     lx = raw.get("lx") if raw.get("lx") is not None else 1
-    for prop in raw:
-        if prop in BUFF_EXCLUDE:
-            continue
-        max_value = raw[prop]
+    for prop, max_value in _buff_attr_source(raw).items():
         if max_value is None:
             continue
         name = _buff_prop_name(prop)
@@ -108,6 +136,10 @@ def buff_properties(inst: dict) -> list[str]:
 
 
 def buff_is_layer_prop(raw: dict, prop: str) -> bool:
+    """是否 @ 层属性（新格式查 attr 子表，旧格式查顶层）。"""
+    attr = raw.get("attr")
+    if isinstance(attr, dict) and f"@{prop}" in attr:
+        return True
     return f"@{prop}" in raw
 
 
@@ -652,12 +684,30 @@ def _resolve_ranged_multi(attrs: dict | None, ranged_multi=None) -> float:
     return 1
 
 
+def match_conditional(pattern, tags, field_name: str, field_tags) -> bool:
+    """复刻 LeveledSkill.matchesFieldConditional：技能名/tag 双条件（都有时同时满足）。"""
+    has_skill = pattern is not None
+    has_tag = bool(tags)
+    if not has_skill and not has_tag:
+        return False
+    if has_skill and not pattern.search(field_name):
+        return False
+    if has_tag and not any(t in (field_tags or []) for t in tags):
+        return False
+    return True
+
+
+def _field_tags(field: dict) -> list:
+    """提取字段 tag 字符串表。"""
+    return [t for t in (field.get("tag") or []) if isinstance(t, str)]
+
+
 def level_skill_fields_with_attr(skill: dict, attrs: dict | None, rules: list, ranged_multi=None) -> list[dict]:
     """复刻 LeveledSkill.getFieldsWithAttr：条件合并 → 技能倍率赋值 → 影响缩放。
 
     :param skill: level_skill 产物（含 字段）
     :param attrs: 当前角色属性（None 时原样返回字段）
-    :param rules: [(compiled_pattern, props)] 条件列表
+    :param rules: [(compiled_pattern|None, tags|None, props)] 条件列表
     :param ranged_multi: 远程武器多重射击（1 开始），显式传入时优先，否则按 attrs 回退读取
     """
     tt = {
@@ -673,7 +723,7 @@ def level_skill_fields_with_attr(skill: dict, attrs: dict | None, rules: list, r
             continue
         field_attrs = attrs
         if attrs and rules:
-            matched = [props for pattern, props in rules if pattern.search(field.get("名称") or "")]
+            matched = [props for pattern, tags, props in rules if match_conditional(pattern, tags, field.get("名称") or "", _field_tags(field))]
             for props in matched:
                 field_attrs = _merge_conditional(field_attrs, props)
         if field_attrs and field_attrs.get("技能倍率赋值") and "伤害" in (field.get("名称") or ""):

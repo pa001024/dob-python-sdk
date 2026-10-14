@@ -6,7 +6,7 @@
 oracle 输入（见 tests/golden/*.json，由 .tmp/dump-shardbuild-golden.ts 生成）：
 - skill_tables：`safeName → getFieldsWithAttr` 快照（与求值上下文同一口径）
 - skill_names / skill_aliases：`{名称, safeName}` 与 E/Q/P 别名
-- conditional_rules：条件 BUFF `{技能, pattern源码, props}`（Python 侧 re 编译）
+- conditional_rules：条件 BUFF `{技能?, pattern源码?, tag?, props}`（Python 侧 re 编译；技能名/tag 双限定）
 - attack_bonus_log：`getWeaponAttackTypeBonus` 真机调用日志 `key::field::attr → 值`
 - weapons / weapon_bases：面板键 → `{伤害类型, 类型, inherit, atk, isSkillWeapon}` 与有效武器基础值
 - combat：敌人/战斗状态；attrs / weapon_panels 沿用 evaluate 口径
@@ -27,6 +27,7 @@ from __future__ import annotations
 import math
 import re
 
+from . import entities
 from .ast import AstError, parse_ast
 
 WEAPON_DAMAGE_FIELD_BASE = {"[近战]": "近战", "[远程]": "远程", "[同律]": "同律"}
@@ -105,13 +106,25 @@ class DamageContext:
         self._damage_cache: dict = {}
         self.rules = []
         for rule in rules:
-            flags = 0
-            for ch in rule.get("flags", ""):
-                flags |= _FLAG_MAP.get(ch, 0)
-            try:
-                self.rules.append((re.compile(rule["pattern"], flags), dict(rule.get("props", {}))))
-            except re.error:
-                self.rules.append((re.compile(re.escape(rule["pattern"])), dict(rule.get("props", {}))))
+            # 规则形态：dict（含 pattern/tag/props/flags）或 tuple（(pattern, props) 旧式、(pattern, tags, props) 新式）。
+            if isinstance(rule, dict):
+                pattern_src, tags, props = rule.get("pattern"), rule.get("tag"), rule.get("props") or {}
+                flags = 0
+                for ch in rule.get("flags", ""):
+                    flags |= _FLAG_MAP.get(ch, 0)
+            else:
+                if len(rule) == 3:
+                    pattern_src, tags, props = rule
+                else:
+                    pattern_src, tags, props = rule[0], None, rule[1]
+                flags = 0
+            compiled = None
+            if pattern_src:
+                try:
+                    compiled = re.compile(pattern_src, flags)
+                except re.error:
+                    compiled = re.compile(re.escape(pattern_src), flags)
+            self.rules.append((compiled, list(tags) if tags else None, dict(props or {})))
 
     @classmethod
     def from_golden(cls, golden: dict) -> "DamageContext":
@@ -168,15 +181,16 @@ class DamageContext:
         return self.find_field(table, field_name)
 
     # ---- 条件BUFF ----
-    def cond_props(self, field_name: str | None) -> dict | None:
-        """对齐 getConditionalBuffProps：pattern 命中即合并（乘法池按 Π-1）。"""
+    def cond_props(self, field_name: str | None, field_tags=None, base: str | None = None) -> dict | None:
+        """对齐 getConditionalBuffProps：字段名/tag 双条件命中即合并（乘法池按 Π-1）。"""
         if not field_name:
             return None
-        if field_name in self._cond_cache:
-            return self._cond_cache[field_name]
+        cache_key = f"{base or self.base_name}::{field_name}"
+        if cache_key in self._cond_cache:
+            return self._cond_cache[cache_key]
         result: dict | None = None
-        for pattern, props in self.rules:
-            if not pattern.search(field_name):
+        for pattern, tags, props in self.rules:
+            if not entities.match_conditional(pattern, tags, field_name, field_tags):
                 continue
             for prop, value in props.items():
                 result = result if result is not None else {}
@@ -184,7 +198,7 @@ class DamageContext:
                     result[prop] = (1 + (result.get(prop) or 0)) * (1 + value) - 1
                 else:
                     result[prop] = (result.get(prop) or 0) + value
-        self._cond_cache[field_name] = result
+        self._cond_cache[cache_key] = result
         return result
 
     # ---- 武器字段基 ----
@@ -240,7 +254,7 @@ class DamageContext:
         summon_field = self.find_field_wide(self._table(table_safe), field_name or "") if field_name else None
         ratio = _num(attrs.get("召唤物属性继承比例", 1)) if summon_field and "召唤物" in (summon_field.get("tag") or []) else 1.0
         current = attrs if ratio == 1 else {**attrs, "攻击": _num(attrs.get("攻击")) * ratio, "昂扬": _num(attrs.get("昂扬")) * ratio, "背水": _num(attrs.get("背水")) * ratio}
-        conditional = self.cond_props(field_name) if field_name else None
+        conditional = self.cond_props(field_name, (summon_field or {}).get("tag"), key) if field_name else None
         scoped = current
         if conditional:
             scoped = dict(current)

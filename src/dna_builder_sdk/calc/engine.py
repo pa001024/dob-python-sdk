@@ -323,14 +323,17 @@ class Engine:
                 continue
             ctx = self.damage_context(attrs)
             for key, expression in expressions.items():
+                if not isinstance(expression, str) or not expression:
+                    continue
                 try:
                     value = evaluate(expression, dict(attrs), None, None, None, ctx.panels, ctx, None, None, None, None)
                 except Exception:
                     continue
                 value = value if (isinstance(value, float) and math.isfinite(value)) else 0.0
                 value = value * _num(buff.get("_coverage", 1))
-                if buff.get(key) != value:
-                    buff[key] = value
+                name = key[1:] if key.startswith("@") else key
+                if buff.get(name) != value:
+                    buff[name] = value
                     changed = True
         return changed
 
@@ -779,10 +782,14 @@ class Engine:
 
         rules = []
         for rule in self.conditional_list():
-            try:
-                rules.append((_re.compile(rule["pattern"]), rule["props"]))
-            except _re.error:
-                rules.append((_re.compile(_re.escape(rule["pattern"])), rule["props"]))
+            pattern = rule.get("pattern")
+            compiled = None
+            if pattern:
+                try:
+                    compiled = _re.compile(pattern)
+                except _re.error:
+                    compiled = _re.compile(_re.escape(pattern))
+            rules.append((compiled, rule.get("tag"), rule["props"]))
         tables = {}
         for skill in self.s["allSkills"]:
             tables[skill["safeName"]] = entities.level_skill_fields_with_attr(skill, attrs, rules, ranged_multi)
@@ -794,32 +801,45 @@ class Engine:
                 tables[alias] = tables[safe]
         return tables
 
+    @staticmethod
+    def _cond_tags(buff: dict) -> list:
+        tags = buff.get("tag")
+        return [t for t in tags if isinstance(t, str)] if isinstance(tags, list) else []
+
+    @staticmethod
+    def _has_cond_target(buff: dict) -> bool:
+        return isinstance(buff.get("技能"), str) or len(Engine._cond_tags(buff)) > 0
+
     def conditional_list(self) -> list:
-        """复刻 getConditionalBuffPropsList（含 code 条件差分，pattern 保留源码）。"""
+        """复刻 getConditionalBuffPropsList（含 code 条件差分，pattern 保留源码；技能名/tag 双限定）。"""
         grouped: dict = {}
         order: list = []
+        meta: dict = {}
         for buff in self.s["buffs"]:
-            pattern = buff.get("技能")
-            if not isinstance(pattern, str):
+            pattern = buff.get("技能") if isinstance(buff.get("技能"), str) else None
+            tags = self._cond_tags(buff)
+            if pattern is None and not tags:
                 continue
-            if pattern not in grouped:
-                grouped[pattern] = {}
-                order.append(pattern)
+            key = (pattern or "") + "\x00" + "\x00".join(tags)
+            if key not in grouped:
+                grouped[key] = {}
+                order.append(key)
+                meta[key] = (pattern, tags)
             for prop in entities.buff_properties(buff):
                 value = buff.get(prop)
                 if not isinstance(value, (int, float)) or isinstance(value, bool) or value == 0:
                     continue
                 if prop in ("无视防御", "技能无视防御", "技能倍率乘数") or prop.endswith("独立增伤"):
-                    grouped[pattern][prop] = (1 + (grouped[pattern].get(prop) or 0)) * (1 + value) - 1
+                    grouped[key][prop] = (1 + (grouped[key].get(prop) or 0)) * (1 + value) - 1
                 else:
-                    grouped[pattern][prop] = (grouped[pattern].get(prop) or 0) + value
-        rules = [{"技能": p, "pattern": p, "flags": "", "props": grouped[p]} for p in order]
+                    grouped[key][prop] = (grouped[key].get(prop) or 0) + value
+        rules = [{"技能": meta[k][0], "pattern": meta[k][0], "tag": meta[k][1], "flags": "", "props": grouped[k]} for k in order]
         rules.extend(self._code_conditionals())
         return rules
 
     def _code_conditionals(self) -> list:
-        scoped = [b for b in self.s["dynamicBuffs"] if isinstance(b.get("技能"), str)]
-        scoped += [b for b in self.effect_code_buffs() if isinstance(b.get("技能"), str)]
+        scoped = [b for b in self.s["dynamicBuffs"] if self._has_cond_target(b)]
+        scoped += [b for b in self.effect_code_buffs() if self._has_cond_target(b)]
         if not scoped:
             return []
         # 可重入保护：基线计算内部经 attr 型 BUFF 的表达式求值会再次进入本函数，
@@ -846,7 +866,8 @@ class Engine:
                         props[key] = (1 + value) / (1 + before) - 1
                     else:
                         props[key] = value - before
-                out.append({"技能": buff["技能"], "pattern": buff["技能"], "flags": "", "props": props})
+                pattern = buff.get("技能") if isinstance(buff.get("技能"), str) else None
+                out.append({"技能": pattern, "pattern": pattern, "tag": self._cond_tags(buff), "flags": "", "props": props})
             return out
         finally:
             self._scoped_computing = False
@@ -1038,7 +1059,7 @@ class Engine:
                 return 0.0
             return engine.attack_type_bonus(weapon_type or key, prefix, attribute)
 
-        rules = [{"技能": r["技能"], "pattern": r["pattern"], "flags": r.get("flags", ""), "props": r["props"]} for r in self.conditional_list()]
+        rules = [{"技能": r["技能"], "pattern": r["pattern"], "tag": r.get("tag"), "flags": r.get("flags", ""), "props": r["props"]} for r in self.conditional_list()]
         ctx = DamageContext(
             attrs=current,
             panels=panels,
