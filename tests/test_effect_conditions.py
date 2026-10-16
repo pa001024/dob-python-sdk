@@ -11,7 +11,7 @@ from dna_builder_sdk import DataPackStore
 from dna_builder_sdk.calc import Engine, build_state
 from dna_builder_sdk.calc.entities import MOD_QUALITY_MAX_LEVEL, level_mod
 
-MOCK_ZIP = Path(__file__).parent / "../../../mock/data-pack/1.6.208.6.zip"
+MOCK_ZIP = Path(__file__).parent / "../../../mock/data-pack/1.6.208.8.zip"
 CHAR_ID = 1501  # 莉兹贝尔（精通 重剑/霰弹枪）
 
 
@@ -36,11 +36,11 @@ class EffectConditionTest(unittest.TestCase):
         if not MOCK_ZIP.is_file():
             raise unittest.SkipTest(f"mock 包缺失：{MOCK_ZIP}")
         cls._tmp = tempfile.mkdtemp()
-        dest = Path(cls._tmp) / "1.6.208.6"
+        dest = Path(cls._tmp) / "1.6.208.8"
         dest.mkdir(parents=True, exist_ok=True)
         shutil.copy(MOCK_ZIP, dest / "package.zip")
         store = DataPackStore(cache_dir=cls._tmp)
-        store.activate("1.6.208.6")
+        store.activate("1.6.208.8")
         cls.tables = store.load_tables()
         cls.byid = {m["id"]: m for m in cls.tables.mods}
 

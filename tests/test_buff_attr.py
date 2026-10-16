@@ -120,8 +120,16 @@ def _to_new_shape(row: dict) -> dict:
     return converted
 
 
+def _to_old_shape(row: dict) -> dict:
+    """把新格式行（数值在 attr）的数值摊回顶层，还原旧格式形态（与 _to_new_shape 互逆）。"""
+    old = {k: v for k, v in row.items() if k != "attr"}
+    for key, value in (row.get("attr") or {}).items():
+        old[key] = value
+    return old
+
+
 class BuffShapeParityTest(unittest.TestCase):
-    """同一份 mock 包数据，旧格式行与新格式行在 Engine 侧必须逐位一致。"""
+    """同一份新格式包数据：attr 形态与摊平旧形态在 Engine 侧必须逐位一致。"""
 
     @classmethod
     def setUpClass(cls):
@@ -129,7 +137,7 @@ class BuffShapeParityTest(unittest.TestCase):
         import shutil
         import tempfile
 
-        mock_zip = Path(__file__).parent / "../../../mock/data-pack/1.6.208.6.zip"
+        mock_zip = Path(__file__).parent / "../../../mock/data-pack/1.6.208.8.zip"
         if not mock_zip.is_file():
             raise unittest.SkipTest(f"mock 包缺失：{mock_zip}")
         from dna_builder_sdk import DataPackStore
@@ -138,17 +146,17 @@ class BuffShapeParityTest(unittest.TestCase):
         from dna_builder_sdk.calc.gamedata import GameDataTables
 
         cls._tmp = tempfile.mkdtemp()
-        dest = Path(cls._tmp) / "1.6.208.6"
+        dest = Path(cls._tmp) / "1.6.208.8"
         dest.mkdir(parents=True, exist_ok=True)
         shutil.copy(mock_zip, dest / "package.zip")
         store = DataPackStore(cache_dir=cls._tmp)
-        store.activate("1.6.208.6")
-        old_tables = store.load_tables()
-        raw = old_tables.raw
-        new_raw = dict(raw)
-        new_raw["buffs"] = [_to_new_shape(b) for b in raw.get("buffs") or []]
-        new_raw["effects"] = [_to_new_shape(e) for e in raw.get("effects") or []]
-        new_tables = GameDataTables(new_raw)
+        store.activate("1.6.208.8")
+        new_tables = store.load_tables()
+        raw = new_tables.raw
+        old_raw = dict(raw)
+        old_raw["buffs"] = [_to_old_shape(b) for b in raw.get("buffs") or []]
+        old_raw["effects"] = [_to_old_shape(e) for e in raw.get("effects") or []]
+        old_tables = GameDataTables(old_raw)
         settings = {
             "charLevel": 80, "charSkillLevel": [10, 10, 10],
             "meleeWeapon": 0, "rangedWeapon": 0, "auraMod": 0,

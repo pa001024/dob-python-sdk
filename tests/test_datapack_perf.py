@@ -23,12 +23,12 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(TESTS_DIR)))
 MOCK_DIR = os.path.join(REPO_ROOT, "mock", "data-pack")
 
 # 钉住的数据包版本（条数锚点与之绑定；换版需同步更新 PIN_COUNTS）
-PIN_VERSION = "1.6.208.6"
+PIN_VERSION = "1.6.208.8"
 PIN_COUNTS = {
     "chars": 33,
     "mods": 586,
-    "buffs": 187,
-    "effects": 65,
+    "buffs": 209,
+    "effects": 71,
     "weapons": 71,
     "pets": 152,
     "pet_entries": 73,
@@ -79,6 +79,7 @@ class TestDatapackPerf(unittest.TestCase):
         best = _best(samples)
         print(f"\n[perf] datapack activate({PIN_VERSION}) best-of-{ROUNDS}: {best * 1000:.1f}ms")
         self.assertEqual(manifest.get("version"), PIN_VERSION)
+        self.assertEqual(manifest.get("major"), 2)
         self.assertLess(best, ACTIVATE_BUDGET, f"activate 基线击穿: {best:.2f}s")
 
     def test_load_tables_baseline(self):

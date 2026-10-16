@@ -93,7 +93,7 @@ PYTHONPATH=sdk/python/src python -m unittest discover -s sdk/python/tests
 | `test_skill_panels.py` | 技能等级 trio + 溯源 + 字段面板 |
 | `test_snapshots.py` | 在线快照装配（fake 后端 + fixture 表） |
 | `test_table_source.py` | 抽象数据源：模块声明、`load_tables()`、快照经 Engine 通路 |
-| `test_datapack_perf.py` | 真实包加载性能基线（`mock/data-pack/1.6.208.6.zip` 钉住版本） |
+| `test_datapack_perf.py` | 真实包加载性能基线（`mock/data-pack/1.6.208.8.zip` 钉住版本） |
 | `test_calc_perf.py` | fixture BD 批量计算性能基线（online 六连批 + shard 42 式） |
 
 ### 表名映射核验（`calc/gamedata.py` 三处常量，均已对真实包 + 前端 + 服务端验过）
@@ -109,8 +109,8 @@ PYTHONPATH=sdk/python/src python -m unittest discover -s sdk/python/tests
 
 | 基线 | best | 预算 | 锚点 |
 |---|---|---|---|
-| `activate(1.6.208.6)`（manifest + 全包 zip 校验，23MB） | ~166ms（best-of-3） | 60s | manifest.version 吻合 |
-| `load_tables()`（8 表 msgpack 解码 + 索引装配） | ~27ms（best-of-3） | 60s | 8 表条数 `33/586/187/65/71/152/73/393` |
+| `activate(1.6.208.8)`（manifest + 全包 zip 校验，22MB） | ~156ms（best-of-3） | 60s | manifest.version 吻合，major=2 |
+| `load_tables()`（8 表 msgpack 解码 + 索引装配） | ~29ms（best-of-3） | 60s | 8 表条数 `33/586/209/71/71/152/73/393` |
 | online 六 BD 一批（装配 + 目标值 + 全量属性） | ~20ms（best-of-5） | 5s | 目标值 + 全量 attrs 对 `online_expected.json` |
 | shard 一批（42 表达式 + 全量属性） | ~56ms（best-of-3，~750 expr/s） | 10s | 逐式对 `shardBuild1_expr.json` 真机值 |
 
