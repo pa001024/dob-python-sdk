@@ -23,6 +23,55 @@ IMGS_MANIFEST_FILE = "imgs.json"
 MODULES_PREFIX = "modules/"
 DEFAULT_VERSIONS_FILE = "versions.json"
 
+# 数据包格式 major：与打包侧（tools/data-pack.ts）统一自增，改动包格式、老读包侧会崩时加一。
+# 抓取侧只收 major <= 当前值的包（缺字段的老条目按 1.6.208.7 分割线推断，见 normalize）。
+DATA_PACK_FORMAT_MAJOR = 2
+DATA_PACK_LEGACY_CUTOFF_VERSION = "1.6.208.7"
+
+
+def _version_parts(version) -> list[int]:
+    """版本号按点切分转数字段，非数字段按零处理。"""
+    parts: list[int] = []
+    for part in str(version or "").split("."):
+        try:
+            parts.append(int(part))
+        except ValueError:
+            parts.append(0)
+    return parts
+
+
+def compare_data_pack_versions(a, b) -> int:
+    """按数字段比较版本号，长度不等时短者补零。"""
+    pa, pb = _version_parts(a), _version_parts(b)
+    for i in range(max(len(pa), len(pb))):
+        diff = (pa[i] if i < len(pa) else 0) - (pb[i] if i < len(pb) else 0)
+        if diff:
+            return 1 if diff > 0 else -1
+    return 0
+
+
+def normalize_data_pack_major(major, version=None) -> int:
+    """归一化 major：合法正整数直接采用；缺失/非法时按历史分割线推断。"""
+    num: int | None = None
+    if isinstance(major, bool):
+        num = None
+    elif isinstance(major, int):
+        num = major
+    elif isinstance(major, float):
+        num = int(major) if major.is_integer() else None
+    elif isinstance(major, str):
+        num = int(major) if major.isdigit() else None
+    if num is not None and num > 0:
+        return num
+    if version is not None and compare_data_pack_versions(version, DATA_PACK_LEGACY_CUTOFF_VERSION) >= 0:
+        return 2
+    return 1
+
+
+def is_data_pack_major_supported(major, version=None) -> bool:
+    """当前 SDK 是否能读取该 major 的包。"""
+    return normalize_data_pack_major(major, version) <= DATA_PACK_FORMAT_MAJOR
+
 
 def revive_packed_value(value):
     """还原打包时的特殊类型（对齐前端 revivePackedValue，递归原地还原）。"""
@@ -80,8 +129,8 @@ class DataPackStore:
     def _bases(self) -> list[str]:
         return [b for b in [self.data_pack_base, self.backup_base] if b]
 
-    def remote_versions(self) -> list:
-        """读远端 versions.json（主备依次尝试；全失败抛 DobHttpError）。"""
+    def _fetch_remote_versions(self) -> list:
+        """读远端 versions.json 原始列表（含当前不支持的新格式包；主备依次尝试）。"""
         last: Exception | None = None
         for base in self._bases():
             try:
@@ -94,17 +143,36 @@ class DataPackStore:
                 last = exc
         raise DobHttpError(f"读取版本列表失败: {self.versions_url()}", payload=str(last)) from last
 
+    def remote_versions(self) -> list:
+        """读远端 versions.json（主备依次尝试；跳过当前不支持的新格式包）。"""
+        return [
+            v
+            for v in self._fetch_remote_versions()
+            if is_data_pack_major_supported(v.get("major"), v.get("version"))
+        ]
+
     def package_url(self, version: str) -> str:
         return f"{self.data_pack_base}/{version}.zip"
 
     # ---- 下载 + 持久化 ----
     def download(self, version: str | None = None, progress: Callable[[int, int | None], None] | None = None) -> dict:
-        """下载整包并激活。version 缺省取远端最新；返回 manifest。"""
+        """下载整包并激活。version 缺省取远端最新兼容版；返回 manifest。"""
         if version is None:
             versions = self.remote_versions()
             if not versions:
-                raise DobHttpError("远端版本列表为空", payload=self.versions_url())
+                raise DobHttpError("远端无兼容的数据包版本", payload=self.versions_url())
             version = versions[0]["version"]
+        else:
+            for entry in self._fetch_remote_versions():
+                if entry.get("version") == version and not is_data_pack_major_supported(
+                    entry.get("major"), entry.get("version")
+                ):
+                    raise DobHttpError(
+                        f"数据包版本 {version} 需要更新 SDK 后才能读取"
+                        f"（major={normalize_data_pack_major(entry.get('major'), version)}，"
+                        f"当前支持到 {DATA_PACK_FORMAT_MAJOR}）",
+                        code="unsupported_pack",
+                    )
         dest_dir = os.path.join(self.cache_dir, version)
         os.makedirs(dest_dir, exist_ok=True)
         dest = os.path.join(dest_dir, "package.zip")
@@ -140,6 +208,13 @@ class DataPackStore:
     def activate(self, version: str) -> dict:
         """切换激活版本：重读磁盘 manifest 并清空模块缓存（运行时热重载入口）。"""
         manifest = self._read_manifest_from_zip(version)
+        if not is_data_pack_major_supported(manifest.get("major"), manifest.get("version", version)):
+            raise DobHttpError(
+                f"数据包版本 {version} 需要更新 SDK 后才能读取"
+                f"（major={normalize_data_pack_major(manifest.get('major'), version)}，"
+                f"当前支持到 {DATA_PACK_FORMAT_MAJOR}）",
+                code="unsupported_pack",
+            )
         self._manifest = manifest
         self._active_version = version
         self._module_cache.clear()
@@ -196,12 +271,20 @@ class DataPackStore:
 
     # ---- 数据源抽象接口（与 ModuleStore.load_tables 同形，给 Engine 用） ----
     def ensure(self, version: str | None = None) -> dict:
-        """保证有可用版本：已安装则激活最新，否则下载（缺省远端最新）。返回 manifest。"""
+        """保证有可用版本：已安装则激活最新兼容版，否则下载（缺省远端最新兼容版）。返回 manifest。"""
         installed = self.installed_versions()
         if version is not None:
             return self.activate(version)
         if installed:
-            return self.activate(installed[-1])
+            last_error: Exception | None = None
+            for candidate in reversed(installed):
+                try:
+                    return self.activate(candidate)
+                except DobHttpError as exc:
+                    if getattr(exc, "code", None) != "unsupported_pack":
+                        raise
+                    last_error = exc
+            raise last_error if last_error else DobHttpError("本地无兼容的数据包版本", code="unsupported_pack")
         return self.download()
 
     def load_tables(self):
