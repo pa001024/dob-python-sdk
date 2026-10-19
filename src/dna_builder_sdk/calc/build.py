@@ -61,9 +61,7 @@ def _weapon_buff_lv(effect_config: dict, tables, weapon_id: int, elm: str = "any
 
 
 def _custom_buff(buffs_cfg: list, level: int = 1, coverage: float = 1) -> dict:
-    raw: dict = {"名称": "自定义BUFF", "描述": "自行填写"}
-    for entry in buffs_cfg or []:
-        raw[entry[0]] = entry[1]
+    raw: dict = {"名称": "自定义BUFF", "描述": "自行填写", "attr": {entry[0]: entry[1] for entry in buffs_cfg or []}}
     buff = level_buff(raw, level)
     if coverage != 1:
         buff["_coverage"] = coverage
@@ -406,6 +404,15 @@ def build_state(char_id: int, settings: dict, tables, skill_levels: list | None 
                 target = melee_weapon if inherit == "melee" else ranged_weapon
                 skill_weapon["伤害类型"] = target.get("伤害类型")
 
+    # BUFF 与 MOD 互斥：装备 `禁用` 列出的任一 MOD 时该 BUFF 不生效
+    # （与 TS `CharBuild.isBuffDisabled` / Rust `refresh_buff_activation` 同口径）
+    equipped_mod_ids = {
+        mod.get("id")
+        for mod in (aura, *char_mods, *melee_mods, *ranged_mods, *skill_mods)
+        if mod
+    }
+    active_buffs = [b for b in buffs if not (set(b.get("禁用") or ()) & equipped_mod_ids)]
+
     state = {
         "char": char,
         "skills": skills,
@@ -416,8 +423,8 @@ def build_state(char_id: int, settings: dict, tables, skill_levels: list | None 
         "skillMods": skill_mods,
         "auraMod": aura,
         "buffs_all": buffs,
-        "buffs": [b for b in buffs if not b.get("code") or len([k for k in b if k not in entities.BUFF_EXCLUDE and not k.startswith("_")]) > 0],
-        "dynamicBuffs": [b for b in buffs if b.get("code")],
+        "buffs": [b for b in active_buffs if not b.get("code") or len(entities.buff_properties(b)) > 0],
+        "dynamicBuffs": [b for b in active_buffs if b.get("code")],
         "meleeWeapon": melee_weapon,
         "rangedWeapon": ranged_weapon,
         "baseName": settings.get("baseName"),

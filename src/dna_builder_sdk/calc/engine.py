@@ -334,6 +334,7 @@ class Engine:
                 name = key[1:] if key.startswith("@") else key
                 if buff.get(name) != value:
                     buff[name] = value
+                    entities._buff_attr_add(buff, name)
                     changed = True
         return changed
 
@@ -384,6 +385,9 @@ class Engine:
         skill_trigger = bonuses[idx["技能触发"]]
         anomaly = bonuses[idx["异常数量"]]
         pet_cd_reduce = bonuses[idx["魔灵CD缩减"]]
+        # 神智回复（每 3 秒额外回复量，0 起始）与技能独立增伤（0 起始）不在 bonus 向量里，单独汇总
+        sanity_regen_bonus = self.get_total("神智回复")
+        skill_ind_inc = self.get_total_mul("技能独立增伤")
         char = self.s["char"]
         mod_attr_bonus = self.get_total(f"{char.get('属性')}MOD属性")
         if mod_attr_bonus > 0:
@@ -415,6 +419,7 @@ class Engine:
             summon_range += mod_attr_bonus * self.get_mods_bonus(elm, "召唤物范围")
             summon_dmg += mod_attr_bonus * self.get_mods_bonus(elm, "召唤物伤害")
             summon_ind += mod_attr_bonus * self.get_mods_bonus(elm, "召唤物独立增伤")
+            sanity_regen_bonus += mod_attr_bonus * self.get_mods_bonus(elm, "神智回复")
         resonance = self.s.get("resonanceGain", 0)
         attack = char["基础攻击"] * (1 + attack_bonus + resonance)
         health = char["基础生命"] * (1 + health_bonus + resonance)
@@ -449,6 +454,10 @@ class Engine:
             "转属逆": convert["转属逆"], "充盈威力": fullness_bonus, "技能触发": skill_trigger,
             "异常数量": (1 + anomaly) if char.get("属性") in ("光", "暗") else max(1, anomaly),
             "魔灵CD": pet_cd, "魔灵CD缩减": max(0.0, min(1.0, pet_cd_reduce)),
+            # 技能独立增伤：只作用于技能伤害池的独立乘区（武器伤害池不吃）
+            "技能独立增伤": skill_ind_inc,
+            # 神智回复总量（每 3 秒）：自然回复 + BUFF / MOD 持续性额外回复
+            "神智回复": sanity_regen_bonus + 2 + math.floor(sanity / 200),
         }
         cond_mods = [m for m in [*self.s["charMods"], self.s.get("auraMod")] if m and m.get("生效", {}).get("条件")]
         if self.apply_condition(attrs, cond_mods):

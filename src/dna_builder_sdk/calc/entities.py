@@ -12,38 +12,6 @@ from .curves import COMMON_LEVEL_UP, MOB_LEVEL_UP
 
 MOD_QUALITY_MAX_LEVEL = {"金": 10, "紫": 5, "蓝": 5, "绿": 3, "白": 3}
 
-MOD_META_KEYS = frozenset(
-    [
-        "id", "icon", "名称", "版本", "系列", "品质", "极性", "耐受", "类型", "属性",
-        "限定", "描述", "效果", "消耗", "技能替换", "buff", "生效", "加成",
-    ]
-)
-"""MOD 原始数据中的非属性元信息键。
-
-词条数值只从 ``加成`` 读取（含兼容折叠的旧格式顶层直挂数值），其余顶层键均为元信息。
-此表仅用于兼容旧格式数据包：构造时把遗留直挂数值折叠进加成，此后统一按加成口径计算。
-"""
-
-# 已废弃：MOD_META_KEYS 的别名，仅为兼容保留。
-MOD_EXCLUDE = MOD_META_KEYS
-
-BUFF_EXCLUDE = frozenset(
-    [
-        "id", "名称", "描述", "限定", "_等级", "_originalBuffData", "a", "b",
-        "lx", "bx", "mx", "dx", "pid", "pt", "code", "attr", "技能", "tag", "_ratio", "_coverage",
-    ]
-)
-
-# BUFF 原始行元信息键：旧格式顶层直挂折叠时跳过这些键。
-BUFF_META_KEYS = frozenset(
-    [
-        "id", "名称", "描述", "限定", "品质", "版本",
-        "a", "b", "dx", "lx", "mx", "code",
-        "技能", "tag", "attr", "display",
-    ]
-)
-
-
 def _is_num(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
@@ -64,6 +32,19 @@ def _buff_prop_name(prop: str) -> str:
     return prop[1:] if prop.startswith("@") else prop
 
 
+def _buff_attr_keys(inst: dict) -> list:
+    """实例持有的 BUFF 层属性键（显式键表，与 MOD 侧 `_attrKeys` 同口径）。"""
+    keys = inst.get("_attrKeys")
+    return keys if isinstance(keys, list) else []
+
+
+def _buff_attr_add(inst: dict, key: str) -> None:
+    """登记 BUFF 层属性键（幂等；动态表达式由 engine.apply_buff_attr 补登记）。"""
+    keys = _buff_attr_keys(inst)
+    if key not in keys:
+        inst["_attrKeys"] = [*keys, key]
+
+
 def level_buff(raw: dict, level: int | None = None, coverage: float = 1.0, ratio: float = 1.0) -> dict:
     """复刻 LeveledBuff 构造 + updatePropertiesByLevel。"""
     inst: dict = {
@@ -72,8 +53,9 @@ def level_buff(raw: dict, level: int | None = None, coverage: float = 1.0, ratio
         "_original": raw,
         "_coverage": coverage,
         "_ratio": ratio,
+        "_attrKeys": [],
     }
-    for key in ("a", "b", "lx", "mx", "dx", "技能", "tag", "code", "attr"):
+    for key in ("a", "b", "lx", "mx", "dx", "技能", "tag", "禁用", "code", "attr"):
         if raw.get(key) is not None and not (key in ("a", "b") and raw.get(key) == 1):
             if key in ("a", "b") and raw.get(key) == 1:
                 continue
@@ -90,22 +72,12 @@ def level_buff(raw: dict, level: int | None = None, coverage: float = 1.0, ratio
 
 
 def _buff_attr_source(raw: dict) -> dict:
-    """数值源：attr 子表优先，旧格式顶层直挂的数值/数值数组折叠补入（attr 同键胜出）。
+    """数值源：直接取 attr 子表。
 
     字符串值为动态表达式，由 apply_buff_attr 求值，此处不处理。
     """
-    out: dict = {}
     attr = raw.get("attr")
-    if isinstance(attr, dict):
-        out.update(attr)
-    for key, value in raw.items():
-        if key in BUFF_META_KEYS or key in out:
-            continue
-        if _is_num(value):
-            out[key] = value
-        elif isinstance(value, list) and all(_is_num(v) for v in value):
-            out[key] = value
-    return out
+    return dict(attr) if isinstance(attr, dict) else {}
 
 
 def _buff_apply_level(inst: dict, raw: dict) -> None:
@@ -114,6 +86,7 @@ def _buff_apply_level(inst: dict, raw: dict) -> None:
         level = max(raw["lx"], level)
     level = min(raw.get("mx") or 1, level)
     inst["_等级"] = level
+    inst["_attrKeys"] = []
     a = inst.get("a") or 1
     b = inst.get("b") or 1
     lx = raw.get("lx") if raw.get("lx") is not None else 1
@@ -124,42 +97,35 @@ def _buff_apply_level(inst: dict, raw: dict) -> None:
         base = raw.get("lx") if raw.get("lx") is not None else 1
         if isinstance(max_value, list):
             inst[name] = max_value[min(level, len(max_value)) - base] * inst["_ratio"] * inst["_coverage"]
+            _buff_attr_add(inst, name)
         elif _is_num(max_value):
             value = (max_value / a) * (1 + (level - lx) / b) * inst["_ratio"] * inst["_coverage"]
             if name == "神智回复":
                 value = js_round(value)
             inst[name] = value
+            _buff_attr_add(inst, name)
 
 
 def buff_properties(inst: dict) -> list[str]:
-    return [k for k in inst if k not in BUFF_EXCLUDE and not k.startswith("_")]
+    """BUFF 层数值属性键（显式键表：仅 `attr` 物化出的键，不再枚举实例自有键）。"""
+    return list(_buff_attr_keys(inst))
 
 
 def buff_is_layer_prop(raw: dict, prop: str) -> bool:
-    """是否 @ 层属性（新格式查 attr 子表，旧格式查顶层）。"""
+    """是否 @ 层属性（查 attr 子表）。"""
     attr = raw.get("attr")
-    if isinstance(attr, dict) and f"@{prop}" in attr:
-        return True
-    return f"@{prop}" in raw
+    return isinstance(attr, dict) and f"@{prop}" in attr
 
 
 # ---------- MOD ----------
 
 def _resolve_bonus(raw: dict) -> dict:
-    """解析原始 MOD 数据的词条加成（复刻 TS 加成口径）。
+    """解析原始 MOD 数据的词条加成（直接取 ``加成`` 表）。
 
-    加成表优先采用 ``加成``，旧格式顶层直挂的数值/数值数组折叠补入。
     返回新对象，不污染上游静态数据。
     """
-    bonus: dict = dict(raw.get("加成") or {})
-    for key, value in raw.items():
-        if key in MOD_META_KEYS or key in bonus:
-            continue
-        if _is_num(value):
-            bonus[key] = value
-        elif isinstance(value, list) and all(_is_num(v) for v in value):
-            bonus[key] = list(value)
-    return bonus
+    bonus = raw.get("加成")
+    return dict(bonus) if isinstance(bonus, dict) else {}
 
 
 def _calc_bonus_value(prop: str, max_value, lv: int, max_level: int):
@@ -258,7 +224,7 @@ def _mod_apply_level(inst: dict, raw: dict) -> None:
                     value = math.ceil(value)
                 scaled[key] = value
         inst["生效"] = scaled
-    # 词条数值只从加成读取（旧格式顶层直挂数值已折叠进加成表）；键排序保证属性键表确定性。
+    # 词条数值直接取 加成 表；键排序保证属性键表确定性。
     bonus = _resolve_bonus(raw)
     for prop in sorted(bonus):
         max_value = bonus[prop]
