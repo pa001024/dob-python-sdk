@@ -443,7 +443,7 @@ class Engine:
             "物理增伤": phys_inc, "属性攻击": elem_bonus, "武器伤害": weapon_dmg, "技能伤害": skill_dmg,
             "技能追伤": skill_chase,
             "独立增伤": ind_inc, "属性穿透": penetration, "无视防御": ignore_def,
-            "技能无视防御": skill_ignore_def, "技能速度": 1 + skill_speed, "失衡易伤": imbalance_bonus,
+            "技能无视防御": skill_ignore_def, "技能速度": min(1 + skill_speed, 2.8), "失衡易伤": imbalance_bonus,
             "技能倍率加数": skill_add, "技能倍率乘数": skill_mul,
             "召唤物属性继承比例": inherit_ratio, "召唤物攻击速度": summon_as,
             "召唤物范围": summon_range, "召唤物伤害": summon_dmg, "召唤物独立增伤": summon_ind,
