@@ -320,11 +320,13 @@ class Engine:
     # ---------- BUFF 动态 attr ----------
     def apply_buff_attr(self, attrs: dict) -> bool:
         changed = False
+        ctx = None
         for buff in self.s["buffs"]:
             expressions = buff.get("attr")
             if not expressions:
                 continue
-            ctx = self.damage_context(attrs)
+            if ctx is None:
+                ctx = self.damage_context(attrs)
             for key, expression in expressions.items():
                 if not isinstance(expression, str) or not expression:
                     continue
