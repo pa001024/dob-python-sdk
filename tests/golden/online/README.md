@@ -23,11 +23,11 @@ PYTHONPATH=sdk/python/src python -m unittest discover -s sdk/python/tests -p "te
 
 说明：
 
-- `DOT伤害` 表达式靶点在拉取时过滤（DOT 引擎超出本 SDK 范围）；
-  Svmqw3LGoY（含 DOT 链）按变量依赖分流断言，非 DOT 部分全覆盖。
+- `DOT伤害` 经 Engine.calculate_dot_damage 直算（对齐 TS calculateDotDamage 全链路）；
+  Svmqw3LGoY（含 DOT 链）与 PXQvFiw-m2 全量变量直断言，不再分流跳过。
 - `Svmqw3LGoY`（琳恩裂伤特性，`技能=裂伤` + `code`）专测条件 BUFF 三条路径：
   不进全局汇总/全局 code、不进乘法聚合、经差分进字段级合并——由 `[引爆]单次` 精确命中证明。
-- `DOT伤害` 表达式靶点在拉取时过滤（DOT 引擎超出本 SDK 范围）。
+- DOT 频率分解口径见 TS calculateDotFrequencies（技能→近战→远程依次填充共享上限，其余属性按异常数量）。
 - `charSkillLevel` 归一化含一个易错点：`normalizeCharSettings` 的
   `charSkillLevel` 行读**原始** settings（绕过类型门合并），SDK 同口径。
 - 空武器（id 0）为零属性占位，`teamWeaponCategories` 计 `长柄`。

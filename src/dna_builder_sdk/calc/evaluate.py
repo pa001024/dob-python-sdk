@@ -13,7 +13,7 @@
 - weapon_panels：`ns → WeaponAttr` 面板（oracle 导出时已按 selectedWeapon 消解）；
   技能字段读取不在本 SDK（需完整构筑上下文，恒 0 并计入 parity 豁免）
 
-超出范围（需完整构筑上下文）：技能字段（含伤害/治疗结算）、DOT 分量。
+超出范围（需完整构筑上下文）：技能字段（含伤害/治疗结算）。DOT伤害经 damage_ctx 直算（对齐 calculateDotDamage）。
 """
 
 from __future__ import annotations
@@ -198,6 +198,14 @@ def evaluate(
     def ev_identity(n, overlay: dict, local_scope: dict) -> float:
         name, ns = n["name"], n.get("namespace")
         force = bool(n.get("forceAttr"))
+        if name == "DOT伤害" and damage_ctx is not None:
+            try:
+                dot_fn = getattr(damage_ctx, "dot_damage", None)
+                if callable(dot_fn):
+                    return float(dot_fn(ns))
+            except Exception:  # noqa: BLE001
+                return 0.0
+            return 0.0
         if not force and not ns and name in local_scope:
             return _num(local_scope[name])
         if not force and not ns and custom_variables and name in custom_variables:

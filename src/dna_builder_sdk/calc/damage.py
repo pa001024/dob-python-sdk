@@ -90,9 +90,11 @@ class DamageContext:
         combat: dict,
         base_name: str,
         attack_bonus_fn=None,
+        dot_damage_fn=None,
     ):
         self.attrs = attrs
         self.attack_bonus_fn = attack_bonus_fn
+        self.dot_damage_fn = dot_damage_fn
         self.panels = panels
         self.tables = skill_tables
         self.skill_names = skill_names
@@ -654,6 +656,16 @@ class DamageContext:
         if not temp:
             self._damage_cache[cache_key] = damage
         return damage
+
+    def dot_damage(self, namespace: str | None = None) -> float:
+        """复刻 evaluateIdentity 的 DOT分支：命名空间分量或全部来源。"""
+        if self.dot_damage_fn is None:
+            return 0.0
+        try:
+            value = self.dot_damage_fn(namespace)
+        except Exception:  # noqa: BLE001
+            return 0.0
+        return _num(value)
 
     def damage_member(self, damage: dict, member: str | None) -> float:
         """对齐 evaluateMember（无成员即期望；未知成员 0）。"""

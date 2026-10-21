@@ -77,6 +77,9 @@ class Engine:
         self._buffs_mul: dict = {}
         # 条件 code 差分基线是否正在计算中（重入保护标志，见 _code_conditionals）
         self._scoped_computing = False
+        # DOT 武器面板缓存（与构筑一一对应，频率分解复用，避免每次重复全量汇总）
+        self._dot_weapon_cache: dict = {}
+        self._dot_damage_cache: dict = {}
 
     # ---------- MOD 列表 ----------
     def mods(self) -> list:
@@ -881,6 +884,168 @@ class Engine:
         finally:
             self._scoped_computing = False
 
+    # ---------- DOT ----------
+    def dot_settings(self) -> dict:
+        s = (self.s.get("settings") or {}).get("dotSettings") or {}
+        return {
+            "skill": _num(s.get("skill")),
+            "melee": _num(s.get("melee")),
+            "ranged": _num(s.get("ranged")),
+            "skillweapon": _num(s.get("skillweapon")),
+            "forceOwnAdditionalDamage": bool(s.get("forceOwnAdditionalDamage")),
+        }
+
+    def resistance_factor(self, attrs: dict) -> float:
+        def factor(r: float) -> float:
+            return max(0.0, 1 - r)
+        r = self.s.get("enemyResistance", 0) or 0
+        if r == 0:
+            return factor(0)
+        if r < 0:
+            convert = max(0.0, min(1.0, _num(attrs.get("转属逆"))))
+            return (1 - convert) * factor(r) + convert * factor(0.5)
+        convert = max(0.0, min(1.0, _num(attrs.get("转属克"))))
+        return (1 - convert) * factor(r) + convert * factor(-4)
+
+    def boost_multiplier(self, attrs: dict) -> float:
+        hp = max(0.0, min(1.0, _num(self.s.get("hpPercent", 1))))
+        return 1.0 + _num(attrs.get("昂扬", 0.0)) * hp
+
+    def desperate_multiplier(self, attrs: dict) -> float:
+        hp = max(0.25, min(1.0, _num(self.s.get("hpPercent", 1))))
+        return 1.0 + 4.0 * _num(attrs.get("背水", 0.0)) * (1.0 - hp) * (1.5 - hp)
+
+    def _dot_weapon_attrs(self, slot: str):
+        """DOT 频率分解复用的武器面板（每构筑算一次，与输入 attrs 无关）。"""
+        if slot in self._dot_weapon_cache:
+            return self._dot_weapon_cache[slot]
+        if slot == "melee":
+            result = self.calculate_weapon_attributes(self.s["meleeWeapon"])
+        elif slot == "ranged":
+            result = self.calculate_weapon_attributes(self.s["rangedWeapon"])
+        else:
+            skill_weapon = self.s.get("skillWeapon")
+            result = self.calculate_weapon_attributes(skill_weapon) if skill_weapon else None
+        self._dot_weapon_cache[slot] = result
+        return result
+
+    def calculate_dot_frequencies(self, inputattrs: dict | None = None) -> dict:
+        """复刻 CharBuild.calculateDotFrequencies：各来源触发/上限/频率分解。"""
+        attrs = inputattrs if inputattrs is not None else self.calculate_weapon_attributes()
+        melee_attrs = self._dot_weapon_attrs("melee")
+        ranged_attrs = self._dot_weapon_attrs("ranged")
+        skill_attrs = self._dot_weapon_attrs("skillweapon")
+        anomaly = max(1.0, _num(attrs.get("异常数量")) or 1.0)
+        try:
+            anomaly_count = int(anomaly) if float(anomaly).is_integer() else float(anomaly)
+        except Exception:  # noqa: BLE001
+            anomaly_count = 1
+        other_elem = 0 if (anomaly_count <= 1) else (anomaly_count - 1)
+
+        def build_source(dtype: str, trigger: float, freq_setting: float, elem_count, has_add: bool, weapon_attack: float) -> dict:
+            hidden = not (trigger > 0)
+            cap = 0.0 if hidden else 1 / (0.4 * trigger)
+            freq = max(0.0, freq_setting or 0.0)
+            doubled = (not hidden) and bool(has_add)
+            effective = min(cap, freq * (2 if doubled else 1)) if not hidden else 0.0
+            return {
+                "type": dtype, "trigger": trigger, "hidden": hidden, "cap": cap,
+                "freq": freq, "otherElementCount": elem_count,
+                "hasAdditionalDamage": bool(has_add), "doubled": doubled,
+                "effectiveFreq": effective, "ownFreq": 0.0, "otherFreq": 0.0,
+                "weaponAttack": weapon_attack,
+            }
+
+        ds = self.dot_settings()
+        skill_trigger = max(0.0, _num(attrs.get("技能触发")))
+        melee_trigger = min(1.0, max(0.0, _num((melee_attrs.get("weapon") or {}).get("触发"))))
+        ranged_trigger = min(1.0, max(0.0, _num((ranged_attrs.get("weapon") or {}).get("触发"))))
+        sw_trigger = min(1.0, max(0.0, _num(((skill_attrs or {}).get("weapon") or {}).get("触发")))) if skill_attrs else 0.0
+        char_attr = (self.s.get("char") or {}).get("属性")
+        is_light = char_attr in ("光", "暗")
+        mod_add = 0.0
+        for m in self.mods():
+            v = m.get("追加伤害")
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                mod_add += v
+        total_add = self.get_total("追加伤害")
+        has_add = bool(ds.get("forceOwnAdditionalDamage")) or ((mod_add > 0) if is_light else (total_add > 0))
+        melee_attack = _num((melee_attrs.get("weapon") or {}).get("攻击"))
+        ranged_attack = _num((ranged_attrs.get("weapon") or {}).get("攻击"))
+        sw_attack = _num(((skill_attrs or {}).get("weapon") or {}).get("攻击")) if skill_attrs else 0.0
+        sources = [
+            build_source("skill", skill_trigger, ds.get("skill", 0.0), 1, has_add, 0.0),
+            build_source("melee", melee_trigger, ds.get("melee", 0.0), other_elem, has_add, melee_attack),
+            build_source("ranged", ranged_trigger, ds.get("ranged", 0.0), other_elem, has_add, ranged_attack),
+            build_source("skillweapon", sw_trigger, ds.get("skillweapon", 0.0), other_elem, has_add, sw_attack),
+        ]
+        cap = max([s["cap"] if not s["hidden"] else 0.0 for s in sources] or [0.0])
+        remaining = cap
+        for s in sources:
+            take = min(s["effectiveFreq"], remaining)
+            s["ownFreq"] = take
+            remaining -= take
+        for s in sources:
+            s["otherFreq"] = 0.0 if s["type"] == "skill" else s["effectiveFreq"] * s["otherElementCount"]
+        own = sum(s["ownFreq"] for s in sources)
+        other = sum(s["otherFreq"] for s in sources)
+        return {"cap": cap, "ownFreq": own, "otherFreq": other, "totalFreq": own + other, "sources": sources}
+
+    @staticmethod
+    def dot_namespace_sources(namespace: str | None, freqs: dict) -> list:
+        sources = freqs.get("sources") or []
+        if not namespace:
+            return list(sources)
+        if namespace in ("角色", "char", "character"):
+            return [s for s in sources if s.get("type") == "skill"]
+        for dtype, names in (("melee", ("melee", "近战")), ("ranged", ("ranged", "远程")), ("skillweapon", ("skillweapon", "同律"))):
+            if namespace in names:
+                found = next((s for s in sources if s.get("type") == dtype), None)
+                return [found] if found else []
+        return []
+
+    def other_dot_resistance_factor(self, attrs: dict, freqs: dict) -> float:
+        other_counts = [s.get("otherElementCount", 0) for s in (freqs.get("sources") or []) if s.get("type") != "skill"]
+        other_count = max(other_counts) if other_counts else 0
+        normal = max(0.0, self.resistance_factor(attrs))
+        r = self.s.get("enemyResistance", 0) or 0
+        if r == 0 or not other_count:
+            return normal
+        if r < 0:
+            return max(0.0, 1 - 0.5)
+        return (max(0.0, 1 - -4) + normal * (other_count - 1)) / other_count
+
+    def calculate_dot_damage(self, namespace: str | None = None, inputattrs: dict | None = None) -> float:
+        """复刻 CharBuild.calculateDotDamage：每秒 DOT 伤害。"""
+        cache_key = namespace or ""
+        if inputattrs is None and cache_key in self._dot_damage_cache:
+            return self._dot_damage_cache[cache_key]
+        if inputattrs is not None:
+            attrs = inputattrs
+        else:
+            base_key = ("__base__",)
+            cached_base = self._dot_weapon_cache.get(base_key)
+            if isinstance(cached_base, dict):
+                attrs = cached_base
+            else:
+                attrs = self.calculate_weapon_attributes()
+                self._dot_weapon_cache[base_key] = attrs
+        freqs = self.calculate_dot_frequencies(attrs)
+        sources = self.dot_namespace_sources(namespace, freqs)
+        penetration = 1 + _num(attrs.get("属性穿透"))
+        own_zone = max(0.0, self.resistance_factor(attrs) * penetration)
+        other_zone = self.other_dot_resistance_factor(attrs, freqs) * penetration
+        hp_more = self.boost_multiplier(attrs) * self.desperate_multiplier(attrs)
+        fullness_mult = 1 + _num(attrs.get("充盈威力"))
+        dmg_inc_mult = 1 + _num(attrs.get("增伤"))
+        total = 0.0
+        for s in sources:
+            base = (_num(attrs.get("攻击")) + _num(s.get("weaponAttack"))) * 0.2 * 6 * 4 * fullness_mult * dmg_inc_mult * hp_more
+            total += base * (_num(s.get("ownFreq")) * own_zone + _num(s.get("otherFreq")) * other_zone)
+        if inputattrs is None:
+            self._dot_damage_cache[cache_key] = total
+        return total
+
     def combat_info(self) -> dict:
         enemy = self.s["enemy"]
         return {
@@ -1069,6 +1234,10 @@ class Engine:
             return engine.attack_type_bonus(weapon_type or key, prefix, attribute)
 
         rules = [{"技能": r["技能"], "pattern": r["pattern"], "tag": r.get("tag"), "flags": r.get("flags", ""), "props": r["props"]} for r in self.conditional_list()]
+
+        def dot_fn(namespace=None):
+            return engine.calculate_dot_damage(namespace, current)
+
         ctx = DamageContext(
             attrs=current,
             panels=panels,
@@ -1082,6 +1251,7 @@ class Engine:
             combat=self.combat_info(),
             base_name=self.s.get("baseName", ""),
             attack_bonus_fn=bonus_fn,
+            dot_damage_fn=dot_fn,
         )
         return ctx
 

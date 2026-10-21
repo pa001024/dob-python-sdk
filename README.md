@@ -89,7 +89,7 @@ PYTHONPATH=sdk/python/src python -m unittest discover -s sdk/python/tests
 | `test_gamedata_shape.py` | gameData ↔ datapack 形状归一化 |
 | `test_jscode_corpus.py` | 14 段真实 BUFF code 可解析可执行 |
 | `test_shardbuild_parity.py` | 纯 BD JSON：42 表达式 + 全量 attrs/panels 与 bun 真机逐位一致 |
-| `test_online_targets.py` | 6 个线上真实 BD 的变量/target/attrs parity（DOT 分流跳过） |
+| `test_online_targets.py` | 7 个线上真实 BD 的变量/target/attrs parity（含 DOT 直算） |
 | `test_skill_panels.py` | 技能等级 trio + 溯源 + 字段面板 |
 | `test_snapshots.py` | 在线快照装配（fake 后端 + fixture 表） |
 | `test_table_source.py` | 抽象数据源：模块声明、`load_tables()`、快照经 Engine 通路 |

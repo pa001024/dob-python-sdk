@@ -4,9 +4,9 @@
 tests/golden/online_data.json（union 原始表）；期望 tests/golden/online_expected.json。
 复现链见 tests/golden/online/README.md（.tmp 脚本）。
 
-DOT 分流：含 `DOT伤害` 的变量（传递闭包）跳过值断言（DOT 引擎超出本 SDK 范围），
-其余变量、target、attrs、panels 全部必须一致——条件 BUFF（buff.技能）的过滤与
-字段级合并正是由这些非 DOT 变量证明的。
+DOT 直算：`DOT伤害`（含命名空间分量）经 Engine.calculate_dot_damage 复刻
+TS calculateDotDamage 全链路求值，不再分流跳过；全部变量、target、attrs、
+panels 必须一致——条件 BUFF（buff.技能）的过滤与字段级合并正是由这些变量证明的。
 """
 
 import json
@@ -14,7 +14,6 @@ import math
 import os
 import unittest
 
-from dna_builder_sdk.calc.ast import tokenize_ast
 from dna_builder_sdk.calc.build import build_state
 from dna_builder_sdk.calc.engine import Engine
 from dna_builder_sdk.calc.gamedata import GameDataTables
@@ -44,36 +43,6 @@ def _tables():
     )
 
 
-def _referenced_vars(body: str, names: set) -> set:
-    """表达式引用的自定义变量名（IDENT token 精确匹配）。"""
-    try:
-        tokens = tokenize_ast(body)
-    except Exception:  # noqa: BLE001
-        return set()
-    idents = {t["value"] for t in tokens if t["kind"] == "IDENT"}
-    return {n for n in names if n in idents}
-
-
-def _dot_dependent(settings: dict) -> set:
-    """传递引用 DOT伤害 的变量名集合。"""
-    entries = list(settings.get("customVariables") or [])
-    names = {k for k, _ in entries}
-    bodies = dict(entries)
-    direct = {name for name, body in entries if "DOT伤害" in (body or "")}
-    closure = set(direct)
-    changed = True
-    while changed:
-        changed = False
-        for name, body in entries:
-            if name in closure:
-                continue
-            if _referenced_vars(body or "", closure):
-                closure.add(name)
-                changed = True
-    _ = names
-    return closure
-
-
 class TestOnlineTargets(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -89,12 +58,9 @@ class TestOnlineTargets(unittest.TestCase):
                 key = file.replace(".json", "")
                 want = self.expected[key]
                 engine = Engine(build_state(payload["charId"], payload["settings"], self.tables), self.tables)
-                skipped = _dot_dependent(payload["settings"])
-                if skipped:
-                    print(f"\n{key}: 跳过 {len(skipped)} 个 DOT 依赖变量")
                 matched = 0
                 for name, want_value in (want.get("vars") or {}).items():
-                    if name in skipped or not isinstance(want_value, (int, float)):
+                    if not isinstance(want_value, (int, float)):
                         continue
                     try:
                         got = engine.calculate(name)
@@ -106,7 +72,7 @@ class TestOnlineTargets(unittest.TestCase):
                     )
                     matched += 1
                 self.assertTrue(matched > 0, f"{file} 无有效变量断言")
-                if payload["settings"].get("targetFunction") not in skipped and isinstance(want.get("target"), (int, float)):
+                if isinstance(want.get("target"), (int, float)):
                     got_target = engine.calculate()
                     self.assertTrue(
                         isinstance(got_target, float) and math.isclose(got_target, want["target"], rel_tol=1e-9, abs_tol=1e-12),
