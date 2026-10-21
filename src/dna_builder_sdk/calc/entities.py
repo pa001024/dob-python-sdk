@@ -681,6 +681,7 @@ def level_skill_fields_with_attr(skill: dict, attrs: dict | None, rules: list, r
         "技能耐久": (attrs or {}).get("技能耐久") or 1,
         "技能效益": (attrs or {}).get("技能效益") or 1,
         "技能范围": (attrs or {}).get("技能范围") or 1,
+        "技能速度": (attrs or {}).get("技能速度") or 1,
         "多重": _resolve_ranged_multi(attrs, ranged_multi),
     }
     out = []
@@ -719,6 +720,8 @@ def level_skill_fields_with_attr(skill: dict, attrs: dict | None, rules: list, r
                     val = field.get("值") * max(0.25, (2 - tt["技能效益"]) / tt["技能耐久"])
                 else:
                     val = field.get("值") * (2 - tt["技能效益"])
+            if "技能速度" in props:
+                val = val / tt["技能速度"]
             if "多重" in props:
                 # 多重影响：读取远程武器多重射击属性（1 开始，无远程武器时为 1，即无加成）
                 val = val * tt["多重"]
