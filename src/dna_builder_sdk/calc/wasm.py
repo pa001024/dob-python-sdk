@@ -9,7 +9,7 @@
 批量实测约 15 倍加速（见 tests/test_calc_perf.py 注释）。
 
 线程模型：每个 `WasmBackend` 拥有独立 wasmtime `Store`，不可跨线程共享；
-多线程请每线程各建一个 `Engine(backend=\"wasm\")`。
+多线程请每线程各建一个 `Engine`。
 """
 
 from __future__ import annotations
@@ -40,8 +40,7 @@ def _require_wasmtime():
         return wasmtime
     except ImportError as error:
         raise ImportError(
-            "wasm 后端需要 wasmtime：pip install dna-builder-sdk[wasm]，"
-            "或改用 backend=\"python\""
+            "wasm 计算需要 wasmtime：pip install wasmtime（或 pip install dna-builder-sdk）"
         ) from error
 
 
