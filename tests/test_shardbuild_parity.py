@@ -95,10 +95,8 @@ class TestPureBuildParity(unittest.TestCase):
 
     def test_panels_parity(self):
         """各槽位武器面板与真机一致（含选中武器 code 修正回填）。"""
-        current = self.eng.calculate_weapon_attributes()
-        mine = self.eng.context_panels(current)
         for key, want_panel in self.expr["expectedPanels"].items():
-            got_panel = mine.get(key) or {}
+            got_panel = self.eng.weapon_panel(key) or {}
             for attr, want in (want_panel or {}).items():
                 got = got_panel.get(attr)
                 self.assertTrue(

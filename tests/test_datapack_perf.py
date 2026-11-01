@@ -20,7 +20,18 @@ from dna_builder_sdk import DataPackStore
 
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(TESTS_DIR)))
-MOCK_DIR = os.path.join(REPO_ROOT, "mock", "data-pack")
+
+
+def _mock_dir() -> str:
+    """mock 数据包目录：历史路径 `mock/data-pack`，现行 `apps/web/mock/data-pack`。"""
+    for rel in (os.path.join("mock", "data-pack"), os.path.join("apps", "web", "mock", "data-pack")):
+        candidate = os.path.join(REPO_ROOT, rel)
+        if os.path.isdir(candidate):
+            return candidate
+    return os.path.join(REPO_ROOT, "mock", "data-pack")
+
+
+MOCK_DIR = _mock_dir()
 
 # 钉住的数据包版本（条数锚点与之绑定；换版需同步更新 PIN_COUNTS）
 PIN_VERSION = "1.6.208.8"

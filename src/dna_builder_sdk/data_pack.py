@@ -25,7 +25,7 @@ DEFAULT_VERSIONS_FILE = "versions.json"
 
 # 数据包格式 major：与打包侧（tools/data-pack.ts）统一自增，改动包格式、老读包侧会崩时加一。
 # 抓取侧只收 major <= 当前值的包（缺字段的老条目按 1.6.208.7 分割线推断，见 normalize）。
-DATA_PACK_FORMAT_MAJOR = 2
+DATA_PACK_FORMAT_MAJOR = 3
 DATA_PACK_LEGACY_CUTOFF_VERSION = "1.6.208.7"
 
 

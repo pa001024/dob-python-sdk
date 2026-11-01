@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dna-builder-sdk"
-version = "0.3.4"
+version = "0.4.0"
 description = "dna-builder 自建后端 + 数据包 + 纯表达式计算的 Python SDK（公开读接口 / 双加载 / 无编辑语义）"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
@@ -26,7 +26,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
-dependencies = ["msgpack>=1.0"]
+dependencies = ["msgpack>=1.0", "wasmtime>=50"]
 
 [project.urls]
 Homepage = "https://github.com/pa001024/dna-builder"
@@ -35,6 +35,9 @@ Issues = "https://github.com/pa001024/dna-builder/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+dna_builder_sdk = ["_wasm/*.wasm"]
 
 [tool.setuptools.package-dir]
 "" = "src"

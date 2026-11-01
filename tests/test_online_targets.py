@@ -89,18 +89,10 @@ class TestOnlineTargets(unittest.TestCase):
                     )
 
     def test_conditional_buff_filtering(self):
-        """buff.技能 过滤专断：Svmqw3LGoY 的条件 BUFF 不进全局表，只进字段级。"""
+        """条件 BUFF（buff.技能 + code）经字段级合并生效：Svmqw3LGoY 的琳恩裂伤特性
+        只作用于「裂伤」字段，[引爆]单次走条件 code 路径，与真机一致即证明合并生效。"""
         payload = _load(os.path.join(ONLINE_DIR, "Svmqw3LGoY.json"))
         engine = Engine(build_state(payload["charId"], payload["settings"], self.tables), self.tables)
-        global_names = [b.get("名称") for b in engine.s["buffs"]]
-        dynamic_names = [b.get("名称") for b in engine.s["dynamicBuffs"]]
-        # 纯 code 条件 BUFF：只进 code 槽位，不进全局汇总槽位（对齐构造器两道 filter）
-        self.assertIn("琳恩裂伤特性", dynamic_names)
-        self.assertNotIn("琳恩裂伤特性", global_names)
-        # 条件 code 经差分进字段级规则（getScopedCodeBuffConditionals 口径）
-        rules = engine.conditional_list()
-        self.assertTrue(any(r["技能"] == "裂伤" for r in rules), "裂伤条件规则缺失")
-        # [引爆]单次走条件 code 路径，与真机一致即证明字段级合并生效
         want = self.expected["Svmqw3LGoY"]["vars"]["[引爆]单次"]
         got = engine.calculate("[引爆]单次")
         self.assertTrue(math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-12), f"mine={got!r} ref={want!r}")

@@ -1,13 +1,12 @@
-"""calc 包：BD 装配 + 聚合引擎 + 表达式/伤害结算（无编辑语义）。"""
+"""calc 包：BD 装配 + wasm 聚合引擎（无编辑语义）。"""
 
-from .ast import AstError, parse_ast, tokenize_ast
-from .build import build_state, parse_trace_levels
-from .damage import DamageContext
+from .build import build_state, normalize_skill_levels, parse_trace_levels, resolve_skill_level
 from .engine import Engine
-from .evaluate import evaluate
 from .gamedata import GameDataTables, TableSource, resolve_tables
+from .wasm import WasmBackend, WasmEvaluateError, is_available as wasm_available
 
 __all__ = [
-    "AstError", "DamageContext", "Engine", "GameDataTables", "TableSource",
-    "build_state", "parse_trace_levels", "parse_ast", "tokenize_ast", "evaluate", "resolve_tables",
+    "Engine", "GameDataTables", "TableSource", "WasmBackend", "WasmEvaluateError",
+    "build_state", "normalize_skill_levels", "resolve_skill_level", "parse_trace_levels",
+    "resolve_tables", "wasm_available",
 ]

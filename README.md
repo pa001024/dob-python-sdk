@@ -5,8 +5,9 @@ dna-builder 后端服务 + 数据包 + 纯表达式计算的 Python SDK。
 - **后端**：只覆盖无需登录的公开读接口（评论 / 构筑 / 攻略 / 时间轴 / 榜单 / 脚本 / MOD / DPS / `gameData*`）。写接口、登录态、`admin`、`shop` 私有接口一律不在本包。
 - **数据双加载（同一抽象接口）**：全量 datapack 下载（`versions.json` + `<ver>.zip`），或按模块按需经 `gameData` GraphQL 分页拉取；两者都实现 `TableSource.load_tables()` → `GameDataTables`，上层（`Engine` / `snapshot_from_online` / 示例）只依赖该接口。磁盘持久化并支持运行时热重载。
 - **计算**：纯 BD JSON（CharSettings + charId）进，目标值出。attrs/面板/技能表/伤害乘区
-  全由引擎自算（实体等级化→加成汇总→条件/code 不动点→武器面板→技能结算链），
-  真实 BD 42 个表达式与 bun 真机逐位一致。不含编辑语义（无 AutoBuild、无配装寻优）。
+  全由内嵌 `dob-calc-core` wasm 自算（与 bun 真机逐位一致，
+  线上 7 BD 批量约 14 倍于旧纯 Python 实现）。不含编辑语义（无 AutoBuild、无配装寻优）。
+  > 0.4.0 起原生 Python 计算引擎已移除（见下文版本记录），`Engine` 为纯 wasm facade。
 
 ```python
 from dna_builder_sdk import BackendClient, GameDataClient, DataPackStore, ModuleStore
@@ -80,21 +81,19 @@ git tag v0.1.0 && git push origin v0.1.0
 PYTHONPATH=sdk/python/src python -m unittest discover -s sdk/python/tests
 ```
 
-52 tests 全过（含 4 个性能基线）。测试清单：
+48 tests 全过（含 4 个性能基线）。测试清单（0.4.0 起原生引擎单测随实现一并移除）：
 
 | 文件 | 覆盖 |
 |---|---|
-| `test_ast_evaluate.py` | 表达式 AST 解析与求值 |
 | `test_data_pack.py` | 数据包 revive/编解码往返 |
 | `test_gamedata_shape.py` | gameData ↔ datapack 形状归一化 |
-| `test_jscode_corpus.py` | 14 段真实 BUFF code 可解析可执行 |
 | `test_shardbuild_parity.py` | 纯 BD JSON：42 表达式 + 全量 attrs/panels 与 bun 真机逐位一致 |
 | `test_online_targets.py` | 7 个线上真实 BD 的变量/target/attrs parity（含 DOT 直算） |
 | `test_skill_panels.py` | 技能等级 trio + 溯源 + 字段面板 |
 | `test_snapshots.py` | 在线快照装配（fake 后端 + fixture 表） |
 | `test_table_source.py` | 抽象数据源：模块声明、`load_tables()`、快照经 Engine 通路 |
 | `test_datapack_perf.py` | 真实包加载性能基线（`mock/data-pack/1.6.208.8.zip` 钉住版本） |
-| `test_calc_perf.py` | fixture BD 批量计算性能基线（online 六连批 + shard 42 式） |
+| `test_calc_perf.py` | fixture BD 批量计算性能基线（online 七连批 + shard 42 式） |
 
 ### 表名映射核验（`calc/gamedata.py` 三处常量，均已对真实包 + 前端 + 服务端验过）
 
@@ -109,10 +108,19 @@ PYTHONPATH=sdk/python/src python -m unittest discover -s sdk/python/tests
 
 | 基线 | best | 预算 | 锚点 |
 |---|---|---|---|
-| `activate(1.6.208.8)`（manifest + 全包 zip 校验，22MB） | ~156ms（best-of-3） | 60s | manifest.version 吻合，major=2 |
-| `load_tables()`（8 表 msgpack 解码 + 索引装配） | ~29ms（best-of-3） | 60s | 8 表条数 `33/586/209/71/71/152/73/393` |
-| online 六 BD 一批（装配 + 目标值 + 全量属性） | ~20ms（best-of-5） | 5s | 目标值 + 全量 attrs 对 `online_expected.json` |
-| shard 一批（42 表达式 + 全量属性） | ~56ms（best-of-3，~750 expr/s） | 10s | 逐式对 `shardBuild1_expr.json` 真机值 |
+| `activate(1.6.208.8)`（manifest + 全包 zip 校验，22MB） | ~152ms（best-of-3） | 60s | manifest.version 吻合，major=2（旧包；SDK major=3 向下兼容） |
+| `load_tables()`（8 表 msgpack 解码 + 索引装配） | ~36ms（best-of-3） | 60s | 8 表条数 `33/586/209/71/71/152/73/393` |
+| online 七 BD 一批（装配 + 目标值 + 全量属性） | ~5.7ms（best-of-5） | 5s | 目标值 + 全量 attrs 对 `online_expected.json` |
+| shard 一批（42 表达式 + 全量属性） | ~24ms（best-of-3，~1766 expr/s） | 10s | 逐式对 `shardBuild1_expr.json` 真机值 |
 
 以上数为开发机实测（Windows / Python 3.14），换机器只对比量级；基线方法（checksum
 锚点先行、best 取 min、每轮等价断言）见技能 `.agents/skills/perf-hotspot-profiling/SKILL.md`。
+
+### 版本记录
+
+- **0.4.0**：移除原生 Python 计算引擎（`calc/{engine,damage,evaluate,ast,jscode,curves,entities}.py`
+  及配套单测），`Engine` 改为内嵌 `dob-calc-core` wasm 的纯 facade；`wasmtime` 转为硬依赖；
+  新增 `dobcc_skill_fields` / `dobcc_panels` Rust 端点支撑技能字段与全槽面板；
+  `Engine(backend=...)` / `snapshot_*()` 的 `engine_backend` 参数取消（行为即原 `backend="wasm"`）。
+- **上游 wasm 同步**：evaluate 信封新增内联 `panels` 字段：非空时直接采用，
+  为空时回退 `dobcc_panels` 端点（行为不变，当前上游该字段恒为空）。

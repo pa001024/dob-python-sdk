@@ -6,7 +6,7 @@ import os
 import unittest
 
 from dna_builder_sdk.calc.build import build_state, parse_trace_levels
-from dna_builder_sdk.calc.engine import Engine
+from dna_builder_sdk.calc.engine import Engine, inline_panels
 from dna_builder_sdk.calc.gamedata import GameDataTables
 
 GOLDEN_DIR = os.path.join(os.path.dirname(__file__), "golden")
@@ -31,6 +31,48 @@ def _tables():
             "monsters": [m for m in data["monsters"] if m],
         }
     )
+
+
+class TestInlinePanels(unittest.TestCase):
+    """内联 panels 采用逻辑：非空采用、缺失/空/非法回退专用端点。"""
+
+    def test_missing_returns_none(self):
+        self.assertIsNone(inline_panels({}))
+        self.assertIsNone(inline_panels({"attributes": {}}))
+        self.assertIsNone(inline_panels(None))
+
+    def test_empty_returns_none(self):
+        self.assertIsNone(inline_panels({"panels": {}}))
+        self.assertIsNone(inline_panels({"panels": None}))
+        self.assertIsNone(inline_panels({"panels": [1, 2]}))
+
+    def test_nonempty_adopted_with_copy(self):
+        panels = {"近战": {"攻击": 1.0}, "远程": {"攻击": 2.0}}
+        got = inline_panels({"panels": panels})
+        self.assertEqual(got, panels)
+        self.assertIsNot(got, panels)
+        self.assertIsNot(got["近战"], panels["近战"])
+
+    def test_fallback_serves_panels_when_inline_empty(self):
+        """当前 wasm 内联 panels 恒为空：weapon_panel 必须走专用端点拿到全槽面板。"""
+        data = _load("shardBuild1_data.json")
+        tables = GameDataTables.from_dict(
+            {
+                "chars": data["chars"],
+                "mods": data["mods"],
+                "buffs": data["buffs"],
+                "effects": [e for e in data["effects"] if e],
+                "weapons": data["weapons"],
+                "pets": data["pets"],
+                "pet_entries": data["petEntries"],
+                "monsters": [m for m in data["monsters"] if m],
+            }
+        )
+        bd = _load("shardBuild1_bd.json")
+        engine = Engine(build_state(bd["charId"], bd["settings"], tables), tables)
+        panel = engine.weapon_panel("ranged")
+        self.assertIsInstance(panel, dict)
+        self.assertGreater(panel.get("攻击", 0), 0)
 
 
 class TestSkillLevels(unittest.TestCase):
@@ -106,12 +148,11 @@ class TestPanels(unittest.TestCase):
             )
 
     def test_weapon_panel(self):
-        """武器面板与上下文面板同源；未知槽位返回 None。"""
+        """槽位别名互通（melee/近战等同槽）；未知槽位返回 None；面板数值与真机一致见 parity。"""
         engine = Engine(build_state(self.bd["charId"], self.bd["settings"], self.tables), self.tables)
-        attrs = engine.calculate_weapon_attributes()
-        standalone = engine.weapon_panels()
         for slot, key in (("melee", "近战"), ("ranged", "远程"), ("skill", "同律")):
-            self.assertEqual(engine.weapon_panel(slot), standalone[key])
+            self.assertEqual(engine.weapon_panel(slot), engine.weapon_panel(key))
+            self.assertIsInstance(engine.weapon_panel(slot), dict)
         self.assertIsNone(engine.weapon_panel("不存在的槽位"))
 
     def test_skill_fields(self):
