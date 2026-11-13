@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import struct
 
-_WASM_PACKAGE_VERSION = "dob-calc-core 0.2.2"
+_WASM_PACKAGE_VERSION = "dob-calc-core 0.2.4"
 
 
 class WasmEvaluateError(RuntimeError):
